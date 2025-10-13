@@ -204,10 +204,8 @@ func DeletePost() web.HandlerFunc {
 			return c.HandleValidation(result)
 		}
 
-		err := bus.Dispatch(c, &cmd.SetPostResponse{
-			Post:   action.Post,
-			Text:   action.Text,
-			Status: enum.PostDeleted,
+		err := bus.Dispatch(c, &cmd.DeletePost{
+			Post: action.Post,
 		})
 		if err != nil {
 			return c.Failure(err)

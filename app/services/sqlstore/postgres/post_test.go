@@ -18,6 +18,238 @@ import (
 	"github.com/getfider/fider/app/pkg/errors"
 )
 
+func TestPostStorage_DeletePost(t *testing.T) {
+	SetupDatabaseTest(t)
+	defer TeardownDatabaseTest()
+
+	// Create a post with all related data
+	post := &entity.Post{
+		ID:          1,
+		Number:      1,
+		Title:       "Test Post",
+		Slug:        "test-post",
+		Description: "Test Description",
+		CreatedAt:   time.Now(),
+		Status:      enum.PostOpen,
+		User:        demoTenantCtx.User(),
+		Tenant:      demoTenantCtx.Tenant(),
+	}
+
+	// Add the post to database
+	err := bus.Dispatch(demoTenantCtx, &cmd.AddNewPost{
+		Title:       post.Title,
+		Description: post.Description,
+	})
+	Expect(err).IsNil()
+
+	// Get the created post
+	getPost := &query.GetPostByNumber{Number: 1}
+	err = bus.Dispatch(demoTenantCtx, getPost)
+	Expect(err).IsNil()
+	post = getPost.Result
+
+	// Add a vote to the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.AddVote{Post: post, User: demoTenantCtx.User()})
+	Expect(err).IsNil()
+
+	// Add a subscriber to the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.AddSubscriber{Post: post, User: demoTenantCtx.User()})
+	Expect(err).IsNil()
+
+	// Add a comment to the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.AddNewComment{
+		Post:    post,
+		Content: "Test comment",
+		User:    demoTenantCtx.User(),
+	})
+	Expect(err).IsNil()
+
+	// Get the comment
+	getComments := &query.GetCommentsByPost{Post: post}
+	err = bus.Dispatch(demoTenantCtx, getComments)
+	Expect(err).IsNil()
+	Expect(getComments.Result).HasLen(1)
+	comment := getComments.Result[0]
+
+	// Add a reaction to the comment
+	err = bus.Dispatch(demoTenantCtx, &cmd.ToggleCommentReaction{
+		Comment: comment,
+		User:    demoTenantCtx.User(),
+		Emoji:   "👍",
+	})
+	Expect(err).IsNil()
+
+	// Add an attachment to the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.SetAttachments{
+		Post: post,
+		Attachments: []*dto.ImageUpload{
+			{BlobKey: "test-blob-key", Remove: false},
+		},
+	})
+	Expect(err).IsNil()
+
+	// Add a notification
+	err = bus.Dispatch(demoTenantCtx, &cmd.AddNewNotification{
+		User:   demoTenantCtx.User(),
+		Title:  "Test notification",
+		PostID: post.ID,
+	})
+	Expect(err).IsNil()
+
+	// Verify all data exists before deletion
+	var count int
+	trx.Scalar(&count, "SELECT COUNT(*) FROM post_votes WHERE post_id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM post_subscribers WHERE post_id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM comments WHERE post_id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM reactions WHERE comment_id = $1", comment.ID)
+	Expect(count).Equals(1)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM attachments WHERE post_id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM notifications WHERE post_id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM posts WHERE id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	// Delete the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.DeletePost{Post: post})
+	Expect(err).IsNil()
+
+	// Verify all data is deleted
+	trx.Scalar(&count, "SELECT COUNT(*) FROM post_votes WHERE post_id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM post_subscribers WHERE post_id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM comments WHERE post_id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM reactions WHERE comment_id = $1", comment.ID)
+	Expect(count).Equals(0)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM attachments WHERE post_id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM notifications WHERE post_id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	trx.Scalar(&count, "SELECT COUNT(*) FROM posts WHERE id = $1", post.ID)
+	Expect(count).Equals(0)
+}
+
+func TestPostStorage_DeletePostWithTags(t *testing.T) {
+	SetupDatabaseTest(t)
+	defer TeardownDatabaseTest()
+
+	// Create a tag
+	err := bus.Dispatch(demoTenantCtx, &cmd.AddNewTag{
+		Name:     "bug",
+		Slug:     "bug",
+		Color:    "#FF0000",
+		IsPublic: true,
+	})
+	Expect(err).IsNil()
+
+	// Get the created tag
+	getTag := &query.GetTagBySlug{Slug: "bug"}
+	err = bus.Dispatch(demoTenantCtx, getTag)
+	Expect(err).IsNil()
+	tag := getTag.Result
+
+	// Create a post
+	err = bus.Dispatch(demoTenantCtx, &cmd.AddNewPost{
+		Title:       "Bug Report",
+		Description: "This is a bug",
+	})
+	Expect(err).IsNil()
+
+	// Get the created post
+	getPost := &query.GetPostByNumber{Number: 1}
+	err = bus.Dispatch(demoTenantCtx, getPost)
+	Expect(err).IsNil()
+	post := getPost.Result
+
+	// Assign tag to post
+	err = bus.Dispatch(demoTenantCtx, &cmd.AssignTag{
+		Post: post,
+		Tag:  tag,
+	})
+	Expect(err).IsNil()
+
+	// Verify tag assignment exists
+	var count int
+	trx.Scalar(&count, "SELECT COUNT(*) FROM post_tags WHERE post_id = $1 AND tag_id = $2", post.ID, tag.ID)
+	Expect(count).Equals(1)
+
+	// Delete the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.DeletePost{Post: post})
+	Expect(err).IsNil()
+
+	// Verify tag assignment is deleted
+	trx.Scalar(&count, "SELECT COUNT(*) FROM post_tags WHERE post_id = $1 AND tag_id = $2", post.ID, tag.ID)
+	Expect(count).Equals(0)
+
+	// Verify post is deleted
+	trx.Scalar(&count, "SELECT COUNT(*) FROM posts WHERE id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	// Verify tag still exists (should not be deleted)
+	trx.Scalar(&count, "SELECT COUNT(*) FROM tags WHERE id = $1", tag.ID)
+	Expect(count).Equals(1)
+}
+
+func TestPostStorage_DeletePostWithMentionNotifications(t *testing.T) {
+	SetupDatabaseTest(t)
+	defer TeardownDatabaseTest()
+
+	// Create a post
+	err := bus.Dispatch(demoTenantCtx, &cmd.AddNewPost{
+		Title:       "Post with mentions",
+		Description: "This post mentions @jon",
+	})
+	Expect(err).IsNil()
+
+	// Get the created post
+	getPost := &query.GetPostByNumber{Number: 1}
+	err = bus.Dispatch(demoTenantCtx, getPost)
+	Expect(err).IsNil()
+	post := getPost.Result
+
+	// Add a mention notification
+	err = bus.Dispatch(demoTenantCtx, &cmd.AddMentionNotification{
+		User:    demoTenantCtx.User(),
+		Post:    post,
+		Comment: nil,
+	})
+	Expect(err).IsNil()
+
+	// Verify mention notification exists
+	var count int
+	trx.Scalar(&count, "SELECT COUNT(*) FROM mention_notifications WHERE post_id = $1", post.ID)
+	Expect(count).Equals(1)
+
+	// Delete the post
+	err = bus.Dispatch(demoTenantCtx, &cmd.DeletePost{Post: post})
+	Expect(err).IsNil()
+
+	// Verify mention notification is deleted
+	trx.Scalar(&count, "SELECT COUNT(*) FROM mention_notifications WHERE post_id = $1", post.ID)
+	Expect(count).Equals(0)
+
+	// Verify post is deleted
+	trx.Scalar(&count, "SELECT COUNT(*) FROM posts WHERE id = $1", post.ID)
+	Expect(count).Equals(0)
+}
+
 func TestPostStorage_GetAll(t *testing.T) {
 	SetupDatabaseTest(t)
 	defer TeardownDatabaseTest()

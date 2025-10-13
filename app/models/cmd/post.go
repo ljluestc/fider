@@ -25,3 +25,7 @@ type SetPostResponse struct {
 	Text   string
 	Status enum.PostStatus
 }
+
+type DeletePost struct {
+	Post *entity.Post
+}

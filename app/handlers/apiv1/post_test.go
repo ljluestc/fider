@@ -21,6 +21,112 @@ import (
 	"github.com/getfider/fider/app/pkg/mock"
 )
 
+func TestDeletePostHandler(t *testing.T) {
+	RegisterT(t)
+
+	var deletePostCmd *cmd.DeletePost
+	bus.AddHandler(func(ctx context.Context, c *cmd.DeletePost) error {
+		deletePostCmd = c
+		return nil
+	})
+
+	bus.AddHandler(func(ctx context.Context, q *query.GetPostByNumber) error {
+		q.Result = &entity.Post{
+			ID:      1,
+			Number:  1,
+			Title:   "Test Post",
+			Status:  enum.PostOpen,
+			User:    mock.JonSnow,
+			Tenant:  mock.DemoTenant,
+		}
+		return nil
+	})
+
+	bus.AddHandler(func(ctx context.Context, q *query.PostIsReferenced) error {
+		q.Result = false
+		return nil
+	})
+
+	bus.AddHandler(func(ctx context.Context, c *cmd.NotifyAboutDeletedPost) error { return nil })
+
+	code, _ := mock.NewServer().
+		OnTenant(mock.DemoTenant).
+		AsUser(mock.AryaStark).
+		ExecutePost(apiv1.DeletePost(), `{ "text": "This post is spam" }`)
+
+	Expect(code).Equals(http.StatusOK)
+	Expect(deletePostCmd).IsNotNil()
+	Expect(deletePostCmd.Post.ID).Equals(1)
+}
+
+func TestDeletePostHandler_Unauthorized(t *testing.T) {
+	RegisterT(t)
+
+	bus.AddHandler(func(ctx context.Context, q *query.GetPostByNumber) error {
+		q.Result = &entity.Post{
+			ID:      1,
+			Number:  1,
+			Title:   "Test Post",
+			Status:  enum.PostOpen,
+			User:    mock.JonSnow,
+			Tenant:  mock.DemoTenant,
+		}
+		return nil
+	})
+
+	// Test with non-administrator user
+	code, _ := mock.NewServer().
+		OnTenant(mock.DemoTenant).
+		AsUser(mock.JonSnow). // Jon Snow is not an administrator
+		ExecutePost(apiv1.DeletePost(), `{ "text": "This post is spam" }`)
+
+	Expect(code).Equals(http.StatusForbidden)
+}
+
+func TestDeletePostHandler_PostNotFound(t *testing.T) {
+	RegisterT(t)
+
+	bus.AddHandler(func(ctx context.Context, q *query.GetPostByNumber) error {
+		return app.ErrNotFound
+	})
+
+	code, _ := mock.NewServer().
+		OnTenant(mock.DemoTenant).
+		AsUser(mock.AryaStark).
+		ExecutePost(apiv1.DeletePost(), `{ "text": "This post is spam" }`)
+
+	Expect(code).Equals(http.StatusNotFound)
+}
+
+func TestDeletePostHandler_PostReferenced(t *testing.T) {
+	RegisterT(t)
+
+	bus.AddHandler(func(ctx context.Context, q *query.GetPostByNumber) error {
+		q.Result = &entity.Post{
+			ID:      1,
+			Number:  1,
+			Title:   "Test Post",
+			Status:  enum.PostOpen,
+			User:    mock.JonSnow,
+			Tenant:  mock.DemoTenant,
+		}
+		return nil
+	})
+
+	bus.AddHandler(func(ctx context.Context, q *query.PostIsReferenced) error {
+		q.Result = true // Post is referenced by another post
+		return nil
+	})
+
+	code, response := mock.NewServer().
+		OnTenant(mock.DemoTenant).
+		AsUser(mock.AryaStark).
+		ExecutePost(apiv1.DeletePost(), `{ "text": "This post is spam" }`)
+
+	Expect(code).Equals(http.StatusBadRequest)
+	Expect(response).Contains("cannotdeleteduplicatepost")
+}
+
 func TestCreatePostHandler(t *testing.T) {
 	RegisterT(t)
 

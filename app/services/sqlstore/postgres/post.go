@@ -265,6 +265,120 @@ func markPostAsDuplicate(ctx context.Context, c *cmd.MarkPostAsDuplicate) error 
 	})
 }
 
+func deletePost(ctx context.Context, c *cmd.DeletePost) error {
+	return using(ctx, func(trx *dbx.Trx, tenant *entity.Tenant, user *entity.User) error {
+		postID := c.Post.ID
+		tenantID := tenant.ID
+
+		// Get all attachment blob keys before deleting attachments
+		var attachmentBlobKeys []string
+		err := trx.Select(&attachmentBlobKeys, `
+			SELECT DISTINCT attachment_bkey 
+			FROM attachments 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to get attachment blob keys")
+		}
+
+		// Delete reactions on comments (cascade from comments)
+		_, err = trx.Execute(`
+			DELETE FROM reactions 
+			WHERE comment_id IN (
+				SELECT id FROM comments 
+				WHERE tenant_id = $1 AND post_id = $2
+			)
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete reactions")
+		}
+
+		// Delete attachments
+		_, err = trx.Execute(`
+			DELETE FROM attachments 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete attachments")
+		}
+
+		// Delete comments
+		_, err = trx.Execute(`
+			DELETE FROM comments 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete comments")
+		}
+
+		// Delete post votes
+		_, err = trx.Execute(`
+			DELETE FROM post_votes 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete post votes")
+		}
+
+		// Delete post subscribers
+		_, err = trx.Execute(`
+			DELETE FROM post_subscribers 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete post subscribers")
+		}
+
+		// Delete post tags
+		_, err = trx.Execute(`
+			DELETE FROM post_tags 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete post tags")
+		}
+
+		// Delete notifications
+		_, err = trx.Execute(`
+			DELETE FROM notifications 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete notifications")
+		}
+
+		// Delete mention notifications
+		_, err = trx.Execute(`
+			DELETE FROM mention_notifications 
+			WHERE tenant_id = $1 AND post_id = $2
+		`, tenantID, postID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete mention notifications")
+		}
+
+		// Delete the post itself
+		_, err = trx.Execute(`
+			DELETE FROM posts 
+			WHERE id = $1 AND tenant_id = $2
+		`, postID, tenantID)
+		if err != nil {
+			return errors.Wrap(err, "failed to delete post")
+		}
+
+		// Delete blob entries for attachments
+		for _, blobKey := range attachmentBlobKeys {
+			err := bus.Dispatch(ctx, &cmd.DeleteBlob{Key: blobKey})
+			if err != nil {
+				// Log error but don't fail the transaction - blob cleanup is best effort
+				// The blob service will handle orphaned blobs through its own cleanup process
+				continue
+			}
+		}
+
+		return nil
+	})
+}
+
 func countPostPerStatus(ctx context.Context, q *query.CountPostPerStatus) error {
 	return using(ctx, func(trx *dbx.Trx, tenant *entity.Tenant, user *entity.User) error {
 
