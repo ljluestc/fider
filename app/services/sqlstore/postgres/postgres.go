@@ -115,12 +115,17 @@ func (s Service) Init() {
 	bus.AddHandler(updateTenantAdvancedSettings)
 
 	bus.AddHandler(getVerificationByKey)
+	bus.AddHandler(getVerificationByEmailAndCode)
 	bus.AddHandler(saveVerificationKey)
 	bus.AddHandler(setKeyAsVerified)
+	bus.AddHandler(getPendingSignUpVerification)
+	bus.AddHandler(invalidatePreviousSignUpKeys)
 
 	bus.AddHandler(listCustomOAuthConfig)
 	bus.AddHandler(getCustomOAuthConfigByProvider)
 	bus.AddHandler(saveCustomOAuthConfig)
+	bus.AddHandler(getTenantProviderStatus)
+	bus.AddHandler(setTenantProviderStatus)
 
 	bus.AddHandler(getWebhook)
 	bus.AddHandler(listAllWebhooks)
