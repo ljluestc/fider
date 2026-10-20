@@ -28,6 +28,8 @@ export interface UpdateTenantSettingsRequest {
   title: string
   invitation: string
   welcomeMessage: string
+  welcomeHeader: string
+  descriptionTemplate: string
   cname: string
   locale: string
 }
@@ -92,6 +94,14 @@ export const unblockUser = async (userID: number): Promise<Result> => {
   return await http.delete(`/_api/admin/users/${userID}/block`)
 }
 
+export const trustUser = async (userID: number): Promise<Result> => {
+  return await http.put(`/_api/admin/users/${userID}/trust`)
+}
+
+export const untrustUser = async (userID: number): Promise<Result> => {
+  return await http.delete(`/_api/admin/users/${userID}/trust`)
+}
+
 export const getOAuthConfig = async (provider: string): Promise<Result<OAuthConfig>> => {
   return await http.get<OAuthConfig>(`/_api/admin/oauth/${provider}`)
 }
@@ -109,6 +119,8 @@ export interface CreateEditOAuthConfigRequest {
   jsonUserIDPath: string
   jsonUserNamePath: string
   jsonUserEmailPath: string
+  jsonUserRolesPath: string
+  allowedRoles: string
   logo?: ImageUpload
   isTrusted: boolean
 }
@@ -123,4 +135,16 @@ export const setSystemProviderStatus = async (provider: string, isEnabled: boole
 
 export const resendSignUpEmail = async (): Promise<Result> => {
   return await http.post("/_api/signup/resend", {})
+}
+
+export interface RequestTenantDeletionResponse {
+  scheduledDeletionAt: string
+}
+
+export const requestTenantDeletion = async (subdomain: string): Promise<Result<RequestTenantDeletionResponse>> => {
+  return await http.delete<RequestTenantDeletionResponse>("/_api/admin/tenant", { subdomain })
+}
+
+export const cancelTenantDeletion = async (): Promise<Result> => {
+  return await http.post("/_api/admin/tenant/cancel-deletion")
 }

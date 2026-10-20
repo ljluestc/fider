@@ -83,7 +83,7 @@ func (r *Renderer) loadAssets() error {
 	if err != nil {
 		return errors.Wrap(err, "failed to open file: assets.json")
 	}
-	defer jsonFile.Close()
+	defer func() { _ = jsonFile.Close() }()
 
 	jsonBytes, _ := io.ReadAll(jsonFile)
 	file := &assetsFile{}
@@ -159,7 +159,7 @@ func (r *Renderer) Render(w io.Writer, statusCode int, props Props, ctx *Context
 	public["title"] = title
 
 	if props.Description != "" {
-		description := strings.Replace(props.Description, "\n", " ", -1)
+		description := strings.ReplaceAll(props.Description, "\n", " ")
 		public["description"] = fmt.Sprintf("%.150s", description)
 	}
 
@@ -200,13 +200,13 @@ func (r *Renderer) Render(w io.Writer, statusCode int, props Props, ctx *Context
 
 	public["page"] = props.Page
 	public["contextID"] = ctx.ContextID()
-	public["sessionID"] = ctx.SessionID()
 	public["tenant"] = tenant
 	public["props"] = props.Data
 	public["settings"] = &Map{
 		"mode":                env.Config.HostMode,
 		"locale":              locale,
 		"localeDirection":     localeDirection,
+		"version":             env.Version(),
 		"environment":         env.Config.Environment,
 		"googleAnalytics":     env.Config.GoogleAnalytics,
 		"domain":              env.MultiTenantDomain(),
@@ -232,6 +232,7 @@ func (r *Renderer) Render(w io.Writer, statusCode int, props Props, ctx *Context
 			"avatarBlobKey":   u.AvatarBlobKey,
 			"isAdministrator": u.IsAdministrator(),
 			"isCollaborator":  u.IsCollaborator(),
+			"isTrusted":       u.IsTrusted,
 		}
 	}
 

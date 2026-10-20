@@ -26,7 +26,8 @@ type GetCurrentUserSettings struct {
 }
 
 type GetUserByID struct {
-	UserID int
+	UserID   int
+	TenantID int
 
 	Result *entity.User
 }
@@ -50,4 +51,14 @@ type GetAllUsers struct {
 
 type GetAllUsersNames struct {
 	Result []*dto.UserNames
+}
+
+type SearchUsers struct {
+	Query string
+	Roles []string
+	Page  int
+	Limit int
+
+	Result     []*entity.User
+	TotalCount int
 }

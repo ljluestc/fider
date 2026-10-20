@@ -15,12 +15,14 @@ import (
 // SignInByEmail happens when user request to sign in by email
 type SignInByEmail struct {
 	Email            string `json:"email" format:"lower"`
-	VerificationCode string
+	VerificationCode string `json:"-"`
+	LinkKey          string `json:"-"`
 }
 
 func NewSignInByEmail() *SignInByEmail {
 	return &SignInByEmail{
 		VerificationCode: entity.GenerateEmailVerificationCode(),
+		LinkKey:          entity.GenerateEmailVerificationKey(),
 	}
 }
 
@@ -117,12 +119,14 @@ func (action *VerifySignInCode) Validate(ctx context.Context, user *entity.User)
 type SignInByEmailWithName struct {
 	Email            string `json:"email" format:"lower"`
 	Name             string `json:"name"`
-	VerificationCode string
+	VerificationCode string `json:"-"`
+	LinkKey          string `json:"-"`
 }
 
 func NewSignInByEmailWithName() *SignInByEmailWithName {
 	return &SignInByEmailWithName{
 		VerificationCode: entity.GenerateEmailVerificationCode(),
+		LinkKey:          entity.GenerateEmailVerificationKey(),
 	}
 }
 

@@ -27,10 +27,11 @@ const (
 
 // FiderClaims represents what goes into JWT tokens
 type FiderClaims struct {
-	UserID    int    `json:"user/id"`
-	UserName  string `json:"user/name"`
-	UserEmail string `json:"user/email"`
-	Origin    string `json:"origin"`
+	UserID        int    `json:"user/id"`
+	UserName      string `json:"user/name"`
+	UserEmail     string `json:"user/email"`
+	Origin        string `json:"origin"`
+	SecurityStamp string `json:"user/security_stamp,omitempty"`
 	Metadata
 }
 
@@ -48,6 +49,16 @@ type OAuthStateClaims struct {
 	Redirect   string `json:"oauthstate/redirect"`
 	Identifier string `json:"oauthstate/identifier"`
 	Code       string `json:"oauthstate/code"`
+	Metadata
+}
+
+// OAuthHandoffClaims represents the short lived token that hands an OAuth sign in over
+// from the host-wide callback address to the tenant address. It binds the handoff to a
+// single provider, origin and browser session so it cannot be replayed elsewhere.
+type OAuthHandoffClaims struct {
+	Provider      string `json:"oauthhandoff/provider"`
+	Origin        string `json:"oauthhandoff/origin"`
+	SessionIDHash string `json:"oauthhandoff/session_id_hash"`
 	Metadata
 }
 
@@ -91,10 +102,20 @@ func DecodeOAuthStateClaims(token string) (*OAuthStateClaims, error) {
 	return claims, nil
 }
 
+// DecodeOAuthHandoffClaims extract OAuthHandoffClaims from given JWT token
+func DecodeOAuthHandoffClaims(token string) (*OAuthHandoffClaims, error) {
+	claims := &OAuthHandoffClaims{}
+	err := decode(token, claims)
+	if err != nil {
+		return nil, errors.Wrap(err, "failed to decode OAuthHandoff claims")
+	}
+	return claims, nil
+}
+
 func decode(token string, claims jwtgo.Claims) error {
 	jwtToken, err := jwtgo.ParseWithClaims(token, claims, func(t *jwtgo.Token) (any, error) {
 		if _, ok := t.Method.(*jwtgo.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", t.Header["alg"])
+			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 
 		return []byte(jwtSecret), nil

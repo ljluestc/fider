@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -18,13 +19,13 @@ var replaceOr = strings.NewReplacer("|", " ")
 
 // ToTSQuery converts input to another string that can be safely used for ts_query
 func ToTSQuery(input string) string {
-	input = replaceOr.Replace(allowedTextRunes.ReplaceAllString(input, ""))
+	input = replaceOr.Replace(allowedTextRunes.ReplaceAllString(input, " "))
 	return strings.Join(strings.Fields(input), "|")
 }
 
 // SanitizeString converts input to another string that only contains utf-8 characters and not-null characters
 func SanitizeString(input string) string {
-	input = strings.Replace(input, "\u0000", "", -1)
+	input = strings.ReplaceAll(input, "\u0000", "")
 	return strings.ToValidUTF8(input, "")
 }
 
@@ -35,7 +36,7 @@ func MapLocaleToTSConfig(locale string) string {
 	return enum.MapLocaleToTSConfig(locale)
 }
 
-func getViewData(query query.SearchPosts) (string, []enum.PostStatus, string) {
+func getViewData(query query.SearchPosts, tagsPlaceholder int) (string, []enum.PostStatus, string) {
 	var (
 		condition string
 		sort      string
@@ -62,23 +63,23 @@ func getViewData(query query.SearchPosts) (string, []enum.PostStatus, string) {
 	case "most-discussed":
 		sort = "comments_count"
 	case "my-votes":
-		// Depracated: You can instead filter on my votes only for more flexibility than using this view.
+		// Deprecated: You can instead filter on my votes only for more flexibility than using this view.
 		condition = "AND has_voted = true"
 		sort = "id"
 	case "planned":
-		// Depracated: Use status filters instead
+		// Deprecated: Use status filters instead
 		sort = "response_date"
 		statusFilters = []enum.PostStatus{enum.PostPlanned}
 	case "started":
-		// Depracated: Use status filters instead
+		// Deprecated: Use status filters instead
 		sort = "response_date"
 		statusFilters = []enum.PostStatus{enum.PostStarted}
 	case "completed":
-		// Depracated: Use status filters instead
+		// Deprecated: Use status filters instead
 		sort = "response_date"
 		statusFilters = []enum.PostStatus{enum.PostCompleted}
 	case "declined":
-		// Depracated: Use status filters instead
+		// Deprecated: Use status filters instead
 		sort = "response_date"
 		statusFilters = []enum.PostStatus{enum.PostDeclined}
 	case "all":
@@ -97,11 +98,14 @@ func getViewData(query query.SearchPosts) (string, []enum.PostStatus, string) {
 	}
 
 	if query.NoTagsOnly {
+		// NoTagsOnly takes precedence: combining "untagged" with specific tag
+		// filters produces contradictory SQL that always returns zero rows.
+		query.Tags = nil
 		condition += " AND tags = '{}'"
 	}
 
 	if len(query.Tags) > 0 {
-		condition += " AND tags && $3"
+		condition += fmt.Sprintf(" AND tags && $%d", tagsPlaceholder)
 	}
 	return condition, statusFilters, sort
 }

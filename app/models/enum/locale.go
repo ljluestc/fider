@@ -99,6 +99,16 @@ var (
 		IsRTL:             false,
 	}
 
+	// LocaleKorean represents Korean
+	LocaleKorean = Locale{
+		Code:              "ko",
+		Name:              "Korean",
+		MessageFormatCode: "ko",
+		PostgresConfig:    "simple",
+		LinguaLanguage:    lingua.Korean,
+		IsRTL:             false,
+	}
+
 	// LocaleDutch represents Dutch
 	LocaleDutch = Locale{
 		Code:              "nl",
@@ -179,6 +189,16 @@ var (
 		IsRTL:             false,
 	}
 
+	// LocaleChineseTW represents Chinese (Traditional)
+	LocaleChineseTW = Locale{
+		Code:              "zh-TW",
+		Name:              "Chinese (Traditional)",
+		MessageFormatCode: "zh",
+		PostgresConfig:    "simple",
+		LinguaLanguage:    lingua.Chinese,
+		IsRTL:             false,
+	}
+
 	// LocalePersian represents Persian (Farsi)
 	LocalePersian = Locale{
 		Code:              "fa",
@@ -199,6 +219,7 @@ var (
 		LocaleSwedishSE,
 		LocaleItalian,
 		LocaleJapanese,
+		LocaleKorean,
 		LocaleDutch,
 		LocalePolish,
 		LocaleRussian,
@@ -207,6 +228,7 @@ var (
 		LocaleGreek,
 		LocaleArabic,
 		LocaleChineseCN,
+		LocaleChineseTW,
 		LocalePersian,
 	}
 )

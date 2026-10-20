@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/getfider/fider/app/models/cmd"
@@ -10,46 +10,18 @@ import (
 	"github.com/getfider/fider/app/models/query"
 	"github.com/getfider/fider/app/pkg/dbx"
 	"github.com/getfider/fider/app/pkg/errors"
+	"github.com/getfider/fider/app/services/sqlstore/dbEntities"
 )
-
-type dbComment struct {
-	ID             int            `db:"id"`
-	Content        string         `db:"content"`
-	CreatedAt      time.Time      `db:"created_at"`
-	User           *dbUser        `db:"user"`
-	Attachments    []string       `db:"attachment_bkeys"`
-	EditedAt       dbx.NullTime   `db:"edited_at"`
-	EditedBy       *dbUser        `db:"edited_by"`
-	ReactionCounts dbx.NullString `db:"reaction_counts"`
-}
-
-func (c *dbComment) toModel(ctx context.Context) *entity.Comment {
-	comment := &entity.Comment{
-		ID:          c.ID,
-		Content:     c.Content,
-		CreatedAt:   c.CreatedAt,
-		User:        c.User.toModel(ctx),
-		Attachments: c.Attachments,
-	}
-	if c.EditedAt.Valid {
-		comment.EditedBy = c.EditedBy.toModel(ctx)
-		comment.EditedAt = &c.EditedAt.Time
-	}
-
-	if c.ReactionCounts.Valid {
-		_ = json.Unmarshal([]byte(c.ReactionCounts.String), &comment.ReactionCounts)
-	}
-	return comment
-}
 
 func addNewComment(ctx context.Context, c *cmd.AddNewComment) error {
 	return using(ctx, func(trx *dbx.Trx, tenant *entity.Tenant, user *entity.User) error {
+		isApproved := !tenant.IsModerationEnabled || !user.RequiresModeration()
 		var id int
 		if err := trx.Get(&id, `
-			INSERT INTO comments (tenant_id, post_id, content, user_id, created_at) 
-			VALUES ($1, $2, $3, $4, $5) 
+			INSERT INTO comments (tenant_id, post_id, content, user_id, created_at, is_approved) 
+			VALUES ($1, $2, $3, $4, $5, $6) 
 			RETURNING id
-		`, tenant.ID, c.Post.ID, c.Content, user.ID, time.Now()); err != nil {
+		`, tenant.ID, c.Post.ID, c.Content, user.ID, time.Now(), isApproved); err != nil {
 			return errors.Wrap(err, "failed add new comment")
 		}
 
@@ -123,12 +95,11 @@ func getCommentByID(ctx context.Context, q *query.GetCommentByID) error {
 	return using(ctx, func(trx *dbx.Trx, tenant *entity.Tenant, user *entity.User) error {
 		q.Result = nil
 
-		comment := dbComment{}
-		err := trx.Get(&comment,
-			`SELECT c.id, 
+		query := fmt.Sprintf(`SELECT c.id, 
 							c.content, 
 							c.created_at, 
 							c.edited_at, 
+							c.is_approved,
 							u.id AS user_id, 
 							u.name AS user_name,
 							u.email AS user_email,
@@ -152,28 +123,49 @@ func getCommentByID(ctx context.Context, q *query.GetCommentByID) error {
 			AND e.tenant_id = c.tenant_id
 			WHERE c.id = $1
 			AND c.tenant_id = $2
-			AND c.deleted_at IS NULL`, q.CommentID, tenant.ID)
+			AND c.deleted_at IS NULL
+			AND ($3 = 0 OR c.post_id = $3)%s`, buildApprovalFilter(user))
+
+		comment := dbEntities.Comment{}
+		err := trx.Get(&comment,
+			query, q.CommentID, tenant.ID, q.PostID)
 
 		if err != nil {
 			return err
 		}
 
-		q.Result = comment.toModel(ctx)
+		q.Result = comment.ToModel(ctx)
 		return nil
 	})
+}
+
+func buildApprovalFilter(user *entity.User) string {
+	if user != nil && user.IsCollaborator() {
+		// Admins and collaborators can see all comments
+		return ""
+	} else if user != nil {
+		// Regular users can see approved comments + their own unapproved comments
+		return fmt.Sprintf(" AND (c.is_approved = true OR c.user_id = %d)", user.ID)
+	} else {
+		// Anonymous users can only see approved comments
+		return " AND c.is_approved = true"
+	}
 }
 
 func getCommentsByPost(ctx context.Context, q *query.GetCommentsByPost) error {
 	return using(ctx, func(trx *dbx.Trx, tenant *entity.Tenant, user *entity.User) error {
 		q.Result = make([]*entity.Comment, 0)
 
-		comments := []*dbComment{}
+		comments := []*dbEntities.Comment{}
 		userId := 0
 		if user != nil {
 			userId = user.ID
 		}
-		err := trx.Select(&comments,
-			`
+
+		// Build approval filter based on user permissions
+		approvalFilter := buildApprovalFilter(user)
+
+		query := fmt.Sprintf(`
 			WITH agg_attachments AS ( 
 					SELECT 
 							c.id as comment_id, 
@@ -212,6 +204,7 @@ func getCommentsByPost(ctx context.Context, q *query.GetCommentsByPost) error {
 					c.content, 
 					c.created_at, 
 					c.edited_at, 
+					c.is_approved,
 					u.id AS user_id, 
 					u.name AS user_name,
 					u.email AS user_email,
@@ -244,15 +237,17 @@ func getCommentsByPost(ctx context.Context, q *query.GetCommentsByPost) error {
 			ON ar.comment_id = c.id
 			WHERE p.id = $1
 			AND p.tenant_id = $2
-			AND c.deleted_at IS NULL
-			ORDER BY c.created_at ASC`, q.Post.ID, tenant.ID, userId)
+			AND c.deleted_at IS NULL%s
+			ORDER BY c.created_at DESC`, approvalFilter)
+
+		err := trx.Select(&comments, query, q.Post.ID, tenant.ID, userId)
 		if err != nil {
 			return errors.Wrap(err, "failed get comments of post with id '%d'", q.Post.ID)
 		}
 
 		q.Result = make([]*entity.Comment, len(comments))
 		for i, comment := range comments {
-			q.Result[i] = comment.toModel(ctx)
+			q.Result[i] = comment.ToModel(ctx)
 		}
 		return nil
 	})

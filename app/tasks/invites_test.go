@@ -44,7 +44,7 @@ func TestSendInvites(t *testing.T) {
 	Expect(emailmock.MessageHistory[0].Tenant).Equals(mock.DemoTenant)
 	Expect(emailmock.MessageHistory[0].Props).Equals(dto.Props{
 		"subject": "My Subject",
-		"logo":    "https://fider.io/images/logo-100x100.png",
+		"logo":    "https://login.fider.io/static/assets/logo.png",
 	})
 	Expect(emailmock.MessageHistory[0].From).Equals(dto.Recipient{
 		Name: "Jon Snow",
@@ -68,4 +68,31 @@ func TestSendInvites(t *testing.T) {
 	Expect(savedKeys[0].Request.GetEmail()).Equals("user1@domain.com")
 	Expect(savedKeys[1].Key).Equals("5678")
 	Expect(savedKeys[1].Request.GetEmail()).Equals("user2@domain.com")
+}
+
+func TestSendInvites_UnsafeSchemeInMessage(t *testing.T) {
+	RegisterT(t)
+	bus.Init(emailmock.Service{})
+
+	bus.AddHandler(func(ctx context.Context, c *cmd.SaveVerificationKey) error {
+		return nil
+	})
+
+	worker := mock.NewWorker()
+	task := tasks.SendInvites("My Subject", "[click](javascript:alert(1)) %invite%", []*actions.UserInvitation{
+		{Email: "user1@domain.com", VerificationKey: "1234"},
+	})
+
+	err := worker.
+		OnTenant(mock.DemoTenant).
+		AsUser(mock.JonSnow).
+		WithBaseURL("http://domain.com").
+		Execute(task)
+
+	Expect(err).IsNil()
+	Expect(emailmock.MessageHistory).HasLen(1)
+	// invite_email.html renders this prop raw, so the anchor must already be gone.
+	Expect(emailmock.MessageHistory[0].To[0].Props["message"]).Equals(
+		template.HTML(`<p>click <a href="http://domain.com/invite/verify?k=1234" rel="nofollow noreferrer">http://domain.com/invite/verify?k=1234</a></p>`),
+	)
 }

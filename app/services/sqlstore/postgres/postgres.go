@@ -86,6 +86,7 @@ func (s Service) Init() {
 	bus.AddHandler(countUsers)
 	bus.AddHandler(blockUser)
 	bus.AddHandler(unblockUser)
+	bus.AddHandler(untrustUser)
 	bus.AddHandler(regenerateAPIKey)
 	bus.AddHandler(userSubscribedTo)
 	bus.AddHandler(deleteCurrentUser)
@@ -102,6 +103,8 @@ func (s Service) Init() {
 	bus.AddHandler(getUserByProvider)
 	bus.AddHandler(getAllUsers)
 	bus.AddHandler(getAllUsersNames)
+	bus.AddHandler(searchUsers)
+	bus.AddHandler(rotateAllUserSecurityStamps)
 
 	bus.AddHandler(createTenant)
 	bus.AddHandler(getFirstTenant)
@@ -113,11 +116,20 @@ func (s Service) Init() {
 	bus.AddHandler(updateTenantPrivacySettings)
 	bus.AddHandler(updateTenantEmailAuthAllowedSettings)
 	bus.AddHandler(updateTenantAdvancedSettings)
+	bus.AddHandler(scheduleTenantDeletion)
+	bus.AddHandler(cancelTenantDeletion)
+	bus.AddHandler(deleteTenant)
+	bus.AddHandler(getTenantsPendingDeletion)
+	bus.AddHandler(getTenantByCancelKey)
+	bus.AddHandler(getTenantOwner)
 
 	bus.AddHandler(getVerificationByKey)
 	bus.AddHandler(getVerificationByEmailAndCode)
+	bus.AddHandler(getActiveVerificationByEmail)
 	bus.AddHandler(saveVerificationKey)
 	bus.AddHandler(setKeyAsVerified)
+	bus.AddHandler(incrementVerificationAttempts)
+	bus.AddHandler(invalidateVerificationsByEmail)
 	bus.AddHandler(getPendingSignUpVerification)
 	bus.AddHandler(invalidatePreviousSignUpKeys)
 
@@ -135,16 +147,26 @@ func (s Service) Init() {
 	bus.AddHandler(deleteWebhook)
 	bus.AddHandler(markWebhookAsFailed)
 
-	bus.AddHandler(getBillingState)
 	bus.AddHandler(activateBillingSubscription)
 	bus.AddHandler(cancelBillingSubscription)
-	bus.AddHandler(lockExpiredTenants)
-	bus.AddHandler(getTrialingTenantContacts)
+	bus.AddHandler(getStripeBillingState)
+	bus.AddHandler(activateStripeSubscription)
+	bus.AddHandler(cancelStripeSubscription)
 
 	bus.AddHandler(setSystemSettings)
 	bus.AddHandler(getSystemSettings)
 	bus.AddHandler(AddMentionNotification)
 	bus.AddHandler(getMentionsNotifications)
+
+	bus.AddHandler(approvePost)
+	bus.AddHandler(declinePost)
+	bus.AddHandler(approveComment)
+	bus.AddHandler(declineComment)
+	bus.AddHandler(bulkApproveItems)
+	bus.AddHandler(bulkDeclineItems)
+	bus.AddHandler(getModerationItems)
+	bus.AddHandler(getModerationCount)
+	bus.AddHandler(trustUser)
 }
 
 type SqlHandler func(trx *dbx.Trx, tenant *entity.Tenant, user *entity.User) error

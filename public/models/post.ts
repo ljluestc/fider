@@ -14,10 +14,17 @@ export interface Post {
   votesCount: number
   commentsCount: number
   tags: string[]
+  isApproved: boolean
 }
 
 export class PostStatus {
-  constructor(public title: string, public value: string, public show: boolean, public closed: boolean, public filterable: boolean) {}
+  constructor(
+    public title: string,
+    public value: string,
+    public show: boolean,
+    public closed: boolean,
+    public filterable: boolean
+  ) {}
 
   public static Open = new PostStatus("Open", "open", false, false, true)
   public static Planned = new PostStatus("Planned", "planned", true, false, true)
@@ -66,6 +73,7 @@ export interface Comment {
   reactionCounts?: ReactionCount[]
   editedAt?: string
   editedBy?: User
+  isApproved: boolean
 }
 
 export interface Tag {

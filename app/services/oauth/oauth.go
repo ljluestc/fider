@@ -3,9 +3,11 @@ package oauth
 import (
 	"context"
 	"encoding/base64"
+
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/getfider/fider/app"
 	"github.com/getfider/fider/app/models/cmd"
@@ -18,6 +20,7 @@ import (
 	"github.com/getfider/fider/app/pkg/errors"
 	"github.com/getfider/fider/app/pkg/jsonq"
 	"github.com/getfider/fider/app/pkg/jwt"
+	"github.com/getfider/fider/app/pkg/netguard"
 	"github.com/getfider/fider/app/pkg/validate"
 	"github.com/getfider/fider/app/pkg/web"
 	"golang.org/x/oauth2"
@@ -120,10 +123,17 @@ func parseOAuthRawProfile(ctx context.Context, c *cmd.ParseOAuthRawProfile) erro
 	// Extract and combine name parts
 	name := extractCompositeName(query, config.JSONUserNamePath)
 
+	// Extract roles if path is configured
+	var roles []string
+	if config.JSONUserRolesPath != "" {
+		roles = extractRolesFromJSON(c.Body, config.JSONUserRolesPath)
+	}
+
 	profile := &dto.OAuthUserProfile{
 		ID:    strings.TrimSpace(query.String(config.JSONUserIDPath)),
 		Name:  name,
 		Email: strings.ToLower(strings.TrimSpace(query.String(config.JSONUserEmailPath))),
+		Roles: roles,
 	}
 
 	if profile.ID == "" {
@@ -193,6 +203,57 @@ func extractCompositeName(query *jsonq.Query, namePath string) string {
 	return ""
 }
 
+// extractRolesFromJSON extracts role strings from a JSON body at the given path.
+// Supports formats:
+// - "roles" for array of strings: ["ROLE_ADMIN", "ROLE_USER"]
+// - "roles[].id" for array of objects: [{"id": "ROLE_ADMIN"}, {"id": "ROLE_USER"}]
+// - "user.roles[].name" for nested array of objects
+// - "role" for a single string or comma-separated value
+func extractRolesFromJSON(jsonBody string, rolesPath string) []string {
+	rolesPath = strings.TrimSpace(rolesPath)
+	if rolesPath == "" {
+		return nil
+	}
+
+	q := jsonq.New(jsonBody)
+
+	// "roles[].id" — array of objects, extract field from each
+	if strings.Contains(rolesPath, "[].") {
+		parts := strings.SplitN(rolesPath, "[].", 2)
+		return trimNonEmpty(q.ArrayFieldStrings(parts[0], parts[1]))
+	}
+
+	// "roles" — array of strings or single (possibly comma-separated) string
+	values := q.Strings(rolesPath)
+	if len(values) == 0 {
+		return nil
+	}
+
+	// Single string may contain comma-separated roles
+	if len(values) == 1 && strings.Contains(values[0], ",") {
+		values = strings.Split(values[0], ",")
+	}
+
+	return trimNonEmpty(values)
+}
+
+// trimNonEmpty trims whitespace from each string and returns only non-empty values.
+func trimNonEmpty(ss []string) []string {
+	if ss == nil {
+		return nil
+	}
+	result := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if s = strings.TrimSpace(s); s != "" {
+			result = append(result, s)
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
 func getOAuthAuthorizationURL(ctx context.Context, q *query.GetOAuthAuthorizationURL) error {
 	config, err := getConfig(ctx, q.Provider)
 	if err != nil {
@@ -211,6 +272,9 @@ func getOAuthAuthorizationURL(ctx context.Context, q *query.GetOAuthAuthorizatio
 		Redirect:   q.Redirect,
 		Identifier: q.Identifier,
 		Code:       q.Code,
+		Metadata: jwt.Metadata{
+			ExpiresAt: jwt.Time(time.Now().Add(10 * time.Minute)),
+		},
 	})
 
 	if err != nil {
@@ -256,6 +320,11 @@ func getOAuthRawProfile(ctx context.Context, q *query.GetOAuthRawProfile) error 
 		return err
 	}
 
+	// Guard against SSRF: TokenURL triggers a server-side request during the token exchange.
+	if msgs := validate.WebhookURL(config.TokenURL); len(msgs) > 0 {
+		return errors.New("Token URL is not allowed: %s", strings.Join(msgs, "; "))
+	}
+
 	oauthBaseURL := web.OAuthBaseURL(ctx)
 	exchange := (&oauth2.Config{
 		ClientID:     config.ClientID,
@@ -267,7 +336,8 @@ func getOAuthRawProfile(ctx context.Context, q *query.GetOAuthRawProfile) error 
 		RedirectURL: fmt.Sprintf("%s/oauth/%s/callback", oauthBaseURL, q.Provider),
 	}).Exchange
 
-	oauthToken, err := exchange(ctx, q.Code)
+	guard := requiresSSRFGuard(q.Provider, config)
+	oauthToken, err := exchange(tokenExchangeContext(ctx, guard), q.Code)
 	if err != nil {
 		return err
 	}
@@ -283,13 +353,12 @@ func getOAuthRawProfile(ctx context.Context, q *query.GetOAuthRawProfile) error 
 		return nil
 	}
 
-	req := &cmd.HTTPRequest{
-		URL:    config.ProfileURL,
-		Method: "GET",
-		Headers: map[string]string{
-			"Authorization": "Bearer " + oauthToken.AccessToken,
-		},
+	// Guard against SSRF: ProfileURL is user-configurable and fetched server-side.
+	if msgs := validate.WebhookURL(config.ProfileURL); len(msgs) > 0 {
+		return errors.New("Profile URL is not allowed: %s", strings.Join(msgs, "; "))
 	}
+
+	req := newProfileRequest(guard, config.ProfileURL, oauthToken.AccessToken)
 
 	if err := bus.Dispatch(ctx, req); err != nil {
 		return err
@@ -333,7 +402,7 @@ func listAllOAuthProviders(ctx context.Context, q *query.ListAllOAuthProviders) 
 
 	oauthBaseURL := web.OAuthBaseURL(ctx)
 	for _, p := range oauthProviders.Result {
-		isCustomProvider := string(p.Provider[0]) == "_"
+		isCustomProvider := isCustomOAuthProvider(p.Provider)
 		isEnabled := p.Status == enum.OAuthConfigEnabled
 
 		// For built-in (non-custom) providers, check tenant-level override
@@ -360,6 +429,58 @@ func listAllOAuthProviders(ctx context.Context, q *query.ListAllOAuthProviders) 
 	return nil
 }
 
+// isCustomOAuthProvider reports whether provider is a tenant-defined (custom)
+// OAuth provider. Custom provider keys are prefixed with "_".
+func isCustomOAuthProvider(provider string) bool {
+	return strings.HasPrefix(provider, "_")
+}
+
+// requiresSSRFGuard reports whether outbound requests for this provider must
+// use the dial-time SSRF guard. Only the built-in system provider configs (with
+// their fixed, public Token/Profile URLs) are exempt. Anything else is guarded,
+// including a tenant-stored config whose provider key has no "_" prefix (e.g.
+// "github" when the built-in GitHub provider is not enabled and getConfig falls
+// through to GetCustomOAuthConfigByProvider), so the check fails closed.
+func requiresSSRFGuard(provider string, config *entity.OAuthConfig) bool {
+	if isCustomOAuthProvider(provider) {
+		return true
+	}
+	for _, p := range systemProviders {
+		if p == config {
+			return false
+		}
+	}
+	return true
+}
+
+// tokenExchangeContext returns the context to pass to oauth2's Exchange.
+//
+// Custom providers have admin-configurable Token/Profile URLs, so the SSRF
+// guard is enforced at dial time for them (the validate.WebhookURL preflight
+// can be bypassed via DNS rebinding): when guard is true the context carries
+// the guarded HTTP client (see netguard.ClientFor). Built-in providers use
+// fixed public URLs and keep oauth2's default client, which honours
+// HTTP(S)_PROXY.
+func tokenExchangeContext(ctx context.Context, guard bool) context.Context {
+	if !guard {
+		return ctx
+	}
+	return context.WithValue(ctx, oauth2.HTTPClient, netguard.ClientFor(true))
+}
+
+// newProfileRequest builds the request that fetches the user profile after the
+// token exchange. When guard is true it blocks private network targets.
+func newProfileRequest(guard bool, profileURL, accessToken string) *cmd.HTTPRequest {
+	return &cmd.HTTPRequest{
+		URL:    profileURL,
+		Method: "GET",
+		Headers: map[string]string{
+			"Authorization": "Bearer " + accessToken,
+		},
+		BlockPrivateNetworkTargets: guard,
+	}
+}
+
 func getConfig(ctx context.Context, provider string) (*entity.OAuthConfig, error) {
 	for _, config := range systemProviders {
 		if config.Status == enum.OAuthConfigEnabled && config.Provider == provider {
@@ -367,7 +488,7 @@ func getConfig(ctx context.Context, provider string) (*entity.OAuthConfig, error
 			tenantStatus := &query.GetTenantProviderStatus{Provider: provider}
 			if err := bus.Dispatch(ctx, tenantStatus); err == nil && tenantStatus.Result != nil {
 				if !tenantStatus.Result.IsEnabled {
-					return nil, fmt.Errorf("Provider %s is disabled for this tenant", provider)
+					return nil, fmt.Errorf("provider %s is disabled for this tenant", provider)
 				}
 			}
 			return config, nil

@@ -30,6 +30,9 @@ const locales: { [key: string]: Locale } = {
   ja: {
     text: "Japanese",
   },
+  ko: {
+    text: "Korean",
+  },
   nl: {
     text: "Dutch",
   },
@@ -53,6 +56,9 @@ const locales: { [key: string]: Locale } = {
   },
   "zh-CN": {
     text: "Chinese (Simplified)",
+  },
+  "zh-TW": {
+    text: "Chinese (Traditional)",
   },
   fa: {
     text: "Persian (پارسی)",

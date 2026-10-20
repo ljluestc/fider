@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
@@ -33,19 +34,6 @@ func SignInPage() web.HandlerFunc {
 	}
 }
 
-func LoginEmailSentPage() web.HandlerFunc {
-	return func(c *web.Context) error {
-
-		return c.Page(http.StatusOK, web.Props{
-			Page:  "SignIn/LoginEmailSent.page",
-			Title: "Login email sent",
-			Data: web.Map{
-				"email": c.QueryParam("email")},
-		})
-
-	}
-}
-
 // CompleteSignInProfilePage renders the complete profile page for code flow
 func CompleteSignInProfilePage() web.HandlerFunc {
 	return func(c *web.Context) error {
@@ -71,6 +59,17 @@ func NotInvitedPage() web.HandlerFunc {
 	}
 }
 
+// AccessDeniedPage renders the access denied page for OAuth role mismatches
+func AccessDeniedPage() web.HandlerFunc {
+	return func(c *web.Context) error {
+		return c.Page(http.StatusForbidden, web.Props{
+			Page:        "Error/AccessDenied.page",
+			Title:       "Access Denied",
+			Description: "You do not have the required permissions to access this site.",
+		})
+	}
+}
+
 // SignInByEmail checks if user exists and sends code only for existing users
 func SignInByEmail() web.HandlerFunc {
 	return func(c *web.Context) error {
@@ -86,8 +85,15 @@ func SignInByEmail() web.HandlerFunc {
 
 		// Only send code if user exists
 		if userExists {
+			// Invalidate any previous active verification codes for this email
+			_ = bus.Dispatch(c, &cmd.InvalidateVerificationsByEmail{
+				Email: action.Email,
+				Kind:  enum.EmailVerificationKindSignIn,
+			})
+
 			err := bus.Dispatch(c, &cmd.SaveVerificationKey{
-				Key:      action.VerificationCode,
+				Key:      action.LinkKey,
+				Code:     action.VerificationCode,
 				Duration: 15 * time.Minute,
 				Request:  action,
 			})
@@ -95,7 +101,7 @@ func SignInByEmail() web.HandlerFunc {
 				return c.Failure(err)
 			}
 
-			c.Enqueue(tasks.SendSignInEmail(action.Email, action.VerificationCode))
+			c.Enqueue(tasks.SendSignInEmail(action.Email, action.LinkKey, action.VerificationCode))
 		}
 
 		return c.Ok(web.Map{
@@ -127,9 +133,16 @@ func SignInByEmailWithName() web.HandlerFunc {
 			return c.Forbidden()
 		}
 
+		// Invalidate any previous active verification codes for this email
+		_ = bus.Dispatch(c, &cmd.InvalidateVerificationsByEmail{
+			Email: action.Email,
+			Kind:  enum.EmailVerificationKindSignIn,
+		})
+
 		// Save verification with name
 		err = bus.Dispatch(c, &cmd.SaveVerificationKey{
-			Key:      action.VerificationCode,
+			Key:      action.LinkKey,
+			Code:     action.VerificationCode,
 			Duration: 15 * time.Minute,
 			Request:  action,
 		})
@@ -137,7 +150,7 @@ func SignInByEmailWithName() web.HandlerFunc {
 			return c.Failure(err)
 		}
 
-		c.Enqueue(tasks.SendSignInEmail(action.Email, action.VerificationCode))
+		c.Enqueue(tasks.SendSignInEmail(action.Email, action.LinkKey, action.VerificationCode))
 
 		return c.Ok(web.Map{})
 	}
@@ -146,18 +159,19 @@ func SignInByEmailWithName() web.HandlerFunc {
 // VerifySignInCode verifies the code entered by the user and signs them in
 func VerifySignInCode() web.HandlerFunc {
 	return func(c *web.Context) error {
+		const maxAttempts = 5
+
 		action := &actions.VerifySignInCode{}
 		if result := c.BindTo(action); !result.Ok {
 			return c.HandleValidation(result)
 		}
 
-		// Get verification by email and code
-		verification := &query.GetVerificationByEmailAndCode{
+		// Look up the most recent active verification by email (without code)
+		activeVerification := &query.GetActiveVerificationByEmail{
 			Email: action.Email,
-			Code:  action.Code,
 			Kind:  enum.EmailVerificationKindSignIn,
 		}
-		err := bus.Dispatch(c, verification)
+		err := bus.Dispatch(c, activeVerification)
 		if err != nil {
 			if errors.Cause(err) == app.ErrNotFound {
 				return c.BadRequest(web.Map{
@@ -167,20 +181,32 @@ func VerifySignInCode() web.HandlerFunc {
 			return c.Failure(err)
 		}
 
-		result := verification.Result
+		result := activeVerification.Result
 
-		// Check if already verified (with grace period)
-		if result.VerifiedAt != nil {
-			if time.Since(*result.VerifiedAt) > 5*time.Minute {
-				return c.Gone()
+		// Check if max attempts exceeded
+		if result.Attempts >= maxAttempts {
+			return c.BadRequest(web.Map{
+				"code": "Too many attempts. Please request a new code.",
+			})
+		}
+
+		// Increment attempts before comparing (prevents timing attacks)
+		if err := bus.Dispatch(c, &cmd.IncrementVerificationAttempts{Key: result.Key}); err != nil {
+			return c.Failure(err)
+		}
+
+		// Compare the submitted code with the stored code
+		if result.Code != action.Code {
+			if result.Attempts+1 >= maxAttempts {
+				// Final attempt failed — invalidate the code
+				_ = bus.Dispatch(c, &cmd.SetKeyAsVerified{Key: result.Key})
+				return c.BadRequest(web.Map{
+					"code": "Too many attempts. Please request a new code.",
+				})
 			}
-		} else {
-			// Check if expired
-			if time.Now().After(result.ExpiresAt) {
-				// Mark as verified to prevent reuse
-				_ = bus.Dispatch(c, &cmd.SetKeyAsVerified{Key: action.Code})
-				return c.Gone()
-			}
+			return c.BadRequest(web.Map{
+				"code": "Invalid or expired verification code" + fmt.Sprintf(" (attempt %d of %d)", result.Attempts+1, maxAttempts),
+			})
 		}
 
 		// Check if user exists
@@ -207,7 +233,7 @@ func VerifySignInCode() web.HandlerFunc {
 					}
 
 					// Mark code as verified
-					err = bus.Dispatch(c, &cmd.SetKeyAsVerified{Key: action.Code})
+					err = bus.Dispatch(c, &cmd.SetKeyAsVerified{Key: result.Key})
 					if err != nil {
 						return c.Failure(err)
 					}
@@ -226,7 +252,7 @@ func VerifySignInCode() web.HandlerFunc {
 		}
 
 		// Mark code as verified
-		err = bus.Dispatch(c, &cmd.SetKeyAsVerified{Key: action.Code})
+		err = bus.Dispatch(c, &cmd.SetKeyAsVerified{Key: result.Key})
 		if err != nil {
 			return c.Failure(err)
 		}
@@ -252,9 +278,16 @@ func ResendSignInCode() web.HandlerFunc {
 			return c.Forbidden()
 		}
 
+		// Invalidate any previous active verification codes for this email
+		_ = bus.Dispatch(c, &cmd.InvalidateVerificationsByEmail{
+			Email: action.Email,
+			Kind:  enum.EmailVerificationKindSignIn,
+		})
+
 		// Save new verification code
 		err := bus.Dispatch(c, &cmd.SaveVerificationKey{
-			Key:      action.VerificationCode,
+			Key:      action.LinkKey,
+			Code:     action.VerificationCode,
 			Duration: 15 * time.Minute,
 			Request:  action,
 		})
@@ -263,7 +296,7 @@ func ResendSignInCode() web.HandlerFunc {
 		}
 
 		// Send new email
-		c.Enqueue(tasks.SendSignInEmail(action.Email, action.VerificationCode))
+		c.Enqueue(tasks.SendSignInEmail(action.Email, action.LinkKey, action.VerificationCode))
 
 		return c.Ok(web.Map{})
 	}

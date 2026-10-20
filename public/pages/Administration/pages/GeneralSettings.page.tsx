@@ -11,6 +11,8 @@ const GeneralSettingsPage = () => {
   const fider = useFider()
   const [title, setTitle] = useState<string>(fider.session.tenant.name)
   const [welcomeMessage, setWelcomeMessage] = useState<string>(fider.session.tenant.welcomeMessage)
+  const [welcomeHeader, setWelcomeHeader] = useState<string>(fider.session.tenant.welcomeHeader)
+  const [descriptionTemplate, setDescriptionTemplate] = useState<string>(fider.session.tenant.descriptionTemplate)
   const [invitation, setInvitation] = useState<string>(fider.session.tenant.invitation)
   const [logo, setLogo] = useState<ImageUpload | undefined>(undefined)
   const [cname, setCNAME] = useState<string>(fider.session.tenant.cname)
@@ -18,7 +20,7 @@ const GeneralSettingsPage = () => {
   const [error, setError] = useState<Failure | undefined>(undefined)
 
   const handleSave = async (e: ButtonClickEvent) => {
-    const result = await actions.updateTenantSettings({ title, cname, welcomeMessage, invitation, logo, locale })
+    const result = await actions.updateTenantSettings({ title, cname, welcomeMessage, welcomeHeader, descriptionTemplate, invitation, logo, locale })
     if (result.ok) {
       e.preventEnable()
       location.href = `/`
@@ -48,6 +50,20 @@ const GeneralSettingsPage = () => {
           <p className="text-muted">Keep it short and snappy. Your product / service name is usually best.</p>
         </Input>
 
+        <Input
+          field="welcomeHeader"
+          label="Welcome Header"
+          maxLength={100}
+          value={welcomeHeader}
+          disabled={!fider.session.user.isAdministrator}
+          placeholder="Help us build the _best feedback platform_"
+          onChange={setWelcomeHeader}
+        >
+          <p className="text-muted">
+            Large header text shown on the home page. Leave empty to hide. Wrap text with underscores (e.g., _highlighted_) to show it in blue.
+          </p>
+        </Input>
+
         <TextArea
           field="welcomeMessage"
           label="Welcome Message"
@@ -59,6 +75,16 @@ const GeneralSettingsPage = () => {
             The message is shown on this site&apos;s home page. Use it to help visitors understand what this space is about and the importance of their
             feedback.
           </p>
+        </TextArea>
+
+        <TextArea
+          field="descriptionTemplate"
+          label="Default for New Ideas"
+          value={descriptionTemplate}
+          disabled={!fider.session.user.isAdministrator}
+          onChange={setDescriptionTemplate}
+        >
+          <p className="text-muted">If set, all new ideas submitted by users will use this text as the default description.</p>
         </TextArea>
 
         <Input

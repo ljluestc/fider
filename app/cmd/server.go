@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"strings"
 	"syscall"
 
 	"github.com/getfider/fider/app/jobs"
@@ -17,7 +18,6 @@ import (
 	"github.com/getfider/fider/app/pkg/web"
 	"github.com/robfig/cron"
 
-	_ "github.com/getfider/fider/app/services/billing/paddle"
 	_ "github.com/getfider/fider/app/services/blob/fs"
 	_ "github.com/getfider/fider/app/services/blob/s3"
 	_ "github.com/getfider/fider/app/services/blob/sql"
@@ -46,6 +46,10 @@ func RunServer() int {
 		})
 	}
 
+	if strings.HasPrefix(strings.ToUpper(env.Config.GoogleAnalytics), "UA-") {
+		log.Warn(ctx, "GOOGLE_ANALYTICS is set to a Universal Analytics ID, which Google no longer supports. Replace it with a Google Analytics 4 Measurement ID (G-XXXXXXXXXX).")
+	}
+
 	copyEtcFiles(ctx)
 	startJobs(ctx)
 
@@ -59,10 +63,7 @@ func startJobs(ctx context.Context) {
 	c := cron.New()
 	_ = c.AddJob(jobs.NewJob(ctx, "PurgeExpiredNotificationsJob", jobs.PurgeExpiredNotificationsJobHandler{}))
 	_ = c.AddJob(jobs.NewJob(ctx, "EmailSupressionJob", jobs.EmailSupressionJobHandler{}))
-
-	if env.IsBillingEnabled() {
-		_ = c.AddJob(jobs.NewJob(ctx, "LockExpiredTenantsJob", jobs.LockExpiredTenantsJobHandler{}))
-	}
+	_ = c.AddJob(jobs.NewJob(ctx, "DeleteScheduledTenantsJob", jobs.DeleteScheduledTenantsJobHandler{}))
 
 	c.Start()
 }

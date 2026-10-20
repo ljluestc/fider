@@ -10,17 +10,23 @@ on:
   pull_request:
     branches:
       - main
+  merge_group:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test-ui:
     name: test-ui
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Use Node.js 22.x
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v7
         with:
-          node-version: 22.x
+          node-version: 24.x
+          cache: 'npm'
       - run: npm ci
       - run: make lint-ui
       - run: make test-ui
@@ -28,10 +34,6 @@ jobs:
   test-server:
     name: test-server
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, arm64]
     services:
       minio:
         image: getfider/minio:0.0.2
@@ -41,7 +43,7 @@ jobs:
           MINIO_ACCESS_KEY: s3user
           MINIO_SECRET_KEY: s3user-s3cr3t
       postgres:
-        image: postgres:12
+        image: postgres:17
         env:
           POSTGRES_USER: fider_ci
           POSTGRES_PASSWORD: fider_ci_pw
@@ -51,25 +53,28 @@ jobs:
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
 
     steps:
-      - uses: actions/checkout@v2
-      - name: Use Go 1.22
-        uses: actions/setup-go@v2
+      - uses: actions/checkout@v7
+      - name: Use Go 1.27
+        uses: actions/setup-go@v7
         with:
-          go-version: 1.22
+          go-version: '1.27'
+          cache: true
       - name: Use Node.js 22.x
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v7
         with:
-          node-version: 22.x
+          node-version: 24.x
+          cache: 'npm'
       - run: npm ci # required for esbuild
+      # Version comes from go.mod, so Dependabot bumps apply and go.sum verifies the download
       - name: install golangci-lint
-        run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b $(go env GOPATH)/bin v1.59.1
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint
       - name: install godotenv
         run: go install github.com/joho/godotenv/cmd/godotenv
       - run: make lint-server
       - name: make test-server
         run: |
           mkdir ./dist
-          make test-server
+          make test-server SHORT=false
         env:
           BLOB_STORAGE_S3_ENDPOINT_URL: http://localhost:9000
           DATABASE_URL: postgres://fider_ci:fider_ci_pw@localhost:5432/fider_ci?sslmode=disable
@@ -79,11 +84,11 @@ jobs:
     name: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
 
       - name: extract variables
         run: |
-          echo "##[set-output name=sha7;]$(echo ${GITHUB_SHA::7})"
+          echo "sha7=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           echo sha7=${GITHUB_SHA::7}
         id: vars
 
@@ -98,7 +103,7 @@ jobs:
 
       - run: echo ${{ steps.vars.outputs.sha7 }} > ./out/sha7
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: fider-image
           path: out/
@@ -114,7 +119,7 @@ jobs:
           - "8025:8025"
           - "1025:1025"
       postgres:
-        image: postgres:12
+        image: postgres:17
         env:
           POSTGRES_USER: fider_ci
           POSTGRES_PASSWORD: fider_ci_pw
@@ -123,15 +128,17 @@ jobs:
           - 5432:5432
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     strategy:
+      fail-fast: false
       matrix:
-        browser: ["chromium", "webkit", "firefox"]
+        browser: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group') && fromJSON('["chromium"]') || fromJSON('["chromium","webkit","firefox"]') }}
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Use Node.js 22.x
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v7
         with:
-          node-version: 22.x
-      - uses: actions/download-artifact@v4
+          node-version: 24.x
+          cache: 'npm'
+      - uses: actions/download-artifact@v8
         with:
           name: fider-image
           path: ./out
@@ -171,7 +178,7 @@ jobs:
           - "8025:8025"
           - "1025:1025"
       postgres:
-        image: postgres:12
+        image: postgres:17
         env:
           POSTGRES_USER: fider_ci
           POSTGRES_PASSWORD: fider_ci_pw
@@ -180,12 +187,13 @@ jobs:
           - 5432:5432
         options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v7
       - name: Use Node.js 22.x
-        uses: actions/setup-node@v1
+        uses: actions/setup-node@v7
         with:
-          node-version: 22.x
-      - uses: actions/download-artifact@v4
+          node-version: 24.x
+          cache: 'npm'
+      - uses: actions/download-artifact@v8
         with:
           name: fider-image
           path: ./out

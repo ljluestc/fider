@@ -10,7 +10,7 @@
     <a href="https://feedback.fider.io">Fider Feedback</a> •
     <a href="https://demo.fider.io">Fider Demo</a> •
     <a href="https://docs.fider.io">Docs</a> •
-    <a href="https://github.com/TryGhost/Ghost/blob/main/.github/CONTRIBUTING.md">Contributing</a>
+    <a href="https://github.com/getfider/fider/blob/main/CONTRIBUTING.md">Contributing</a>
 </p>
 
 <br/>
@@ -41,7 +41,7 @@ If you do self-host and enjoy Fider, please [let us know where you're using it](
 
 # 💰 Donations and Sponsors
 
-Supoprt the development of Fider to help us make it the best feedback tool! You can set up donations as small or large as you want to help us keep Fider going. [Donate](https://opencollective.com/fider)
+Support the development of Fider to help us make it the best feedback tool! You can set up donations as small or large as you want to help us keep Fider going. [Donate](https://opencollective.com/fider)
 
 If your organization uses Fider, consider becoming a sponsor - set up a monthly donation and get your logo and link on the README. [Become a sponsor](https://opencollective.com/fider)
 

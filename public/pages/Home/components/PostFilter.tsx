@@ -76,9 +76,20 @@ export const PostFilter = (props: PostFilterProps) => {
 
   const handleChangeFilter = (item: OptionItem) => () => {
     const exists = filterItems.find((i) => i.type === item.type && i.value === item.value)
-    const newFilter = exists
-      ? filterItems.filter((i) => !(i.type === item.type && i.value === item.value))
-      : [...filterItems, { type: item.type, value: item.value }]
+    let newFilter: FilterItem[]
+    if (exists) {
+      newFilter = filterItems.filter((i) => !(i.type === item.type && i.value === item.value))
+    } else {
+      // "Untagged" and concrete tags are mutually exclusive — combining them
+      // produces an empty result set on the server.
+      let base = filterItems
+      if (item.type === "noTags") {
+        base = base.filter((i) => i.type !== "tag")
+      } else if (item.type === "tag") {
+        base = base.filter((i) => i.type !== "noTags")
+      }
+      newFilter = [...base, { type: item.type, value: item.value }]
+    }
 
     props.filtersChanged(FilterItemsToFilterState(newFilter))
     setQuery("")
@@ -99,6 +110,15 @@ export const PostFilter = (props: PostFilterProps) => {
       type: "status",
     })
   })
+
+  // Add Pending status for collaborators and admins
+  if (fider.session.isAuthenticated && fider.session.user.isCollaborator) {
+    options.push({
+      label: "Pending",
+      value: "pending",
+      type: "status",
+    })
+  }
 
   if (props.tags.length > 0) {
     options.push({
@@ -130,10 +150,11 @@ export const PostFilter = (props: PostFilterProps) => {
 
         {options.map((o) => {
           const isChecked = filterItems.some((f) => f.type === o.type && f.value === o.value)
+          const fieldKey = `${o.type}:${o.value.toString()}`
 
           return (
-            <Dropdown.ListItem onClick={handleChangeFilter(o)} key={o.value.toString()}>
-              <Checkbox field={o.value.toString()} checked={isChecked}>
+            <Dropdown.ListItem onClick={handleChangeFilter(o)} key={fieldKey}>
+              <Checkbox field={fieldKey} checked={isChecked}>
                 <HStack spacing={2}>
                   <span className={isChecked ? "text-semibold" : ""}>{o.label}</span>
                   {o.count && o.count > 0 && <span className="bg-gray-200 inline-block rounded-full px-1 w-min-4 text-2xs text-center">{o.count}</span>}
@@ -151,7 +172,7 @@ export const PostFilter = (props: PostFilterProps) => {
       <Dropdown
         onToggled={() => setQuery("")}
         renderHandle={
-          <HStack className="h-10 text-medium text-xs rounded-md uppercase border border-gray-400 text-gray-800 p-2 px-3">
+          <HStack className="c-post-filter-btn">
             <Icon sprite={HeroIconFilter} className="h-5 pr-1" />
             {i18n._({ id: "home.filter.label", message: "Filter" })}
             {filterCount > 0 && <div className="bg-gray-200 inline-block rounded-full px-2 py-1 w-min-4 text-2xs text-center">{filterCount}</div>}

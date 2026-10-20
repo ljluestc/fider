@@ -1,9 +1,13 @@
 package apiv1
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/getfider/fider/app/actions"
 	"github.com/getfider/fider/app/metrics"
 	"github.com/getfider/fider/app/models/cmd"
+	"github.com/getfider/fider/app/models/dto"
 	"github.com/getfider/fider/app/models/entity"
 	"github.com/getfider/fider/app/models/enum"
 	"github.com/getfider/fider/app/models/query"
@@ -13,6 +17,35 @@ import (
 	"github.com/getfider/fider/app/tasks"
 )
 
+// appendUnreferencedAttachments appends a fider-image markdown reference to the end of the
+// description for every attachment being added that isn't already referenced in it. This
+// keeps API-created posts consistent with the editor, which embeds images inline as
+// "![](fider-image:<bkey>)". Must be called after UploadImages so blob keys are finalized.
+func appendUnreferencedAttachments(description string, attachments []*dto.ImageUpload) string {
+	seen := map[string]bool{}
+	refs := make([]string, 0, len(attachments))
+	for _, a := range attachments {
+		if a == nil || a.Remove || a.BlobKey == "" || seen[a.BlobKey] {
+			continue
+		}
+		seen[a.BlobKey] = true
+		if strings.Contains(description, "fider-image:"+a.BlobKey) {
+			continue
+		}
+		refs = append(refs, fmt.Sprintf("![](fider-image:%s)", a.BlobKey))
+	}
+
+	if len(refs) == 0 {
+		return description
+	}
+
+	appended := strings.Join(refs, "\n\n")
+	if strings.TrimSpace(description) == "" {
+		return appended
+	}
+	return description + "\n\n" + appended
+}
+
 // SearchPosts return existing posts based on search criteria
 func SearchPosts() web.HandlerFunc {
 	return func(c *web.Context) error {
@@ -21,11 +54,14 @@ func SearchPosts() web.HandlerFunc {
 			viewQueryParams = "all" // Set default value to "all" if not provided
 		}
 		searchPosts := &query.SearchPosts{
-			Query: c.QueryParam("query"),
-			View:  viewQueryParams,
-			Limit: c.QueryParam("limit"),
-			Tags:  c.QueryParamAsArray("tags"),
+			Query:            c.QueryParam("query"),
+			View:             viewQueryParams,
+			Tags:             c.QueryParamAsArray("tags"),
+			ModerationFilter: c.QueryParam("moderation"),
 		}
+		// API keys (staff only) may fetch every post, as there is no offset to page through them
+		searchPosts.SetLimitFromString(c.QueryParam("limit"), c.IsAuthenticatedByAPIKey())
+
 		if myVotesOnly, err := c.QueryParamAsBool("myvotes"); err == nil {
 			searchPosts.MyVotesOnly = myVotesOnly
 		}
@@ -72,7 +108,7 @@ func CreatePost() web.HandlerFunc {
 
 		newPost := &cmd.AddNewPost{
 			Title:       action.Title,
-			Description: action.Description,
+			Description: appendUnreferencedAttachments(action.Description, action.Attachments),
 		}
 		err := bus.Dispatch(c, newPost)
 		if err != nil {
@@ -101,7 +137,8 @@ func CreatePost() web.HandlerFunc {
 			"id":     newPost.Result.ID,
 			"number": newPost.Result.Number,
 			"title":  newPost.Result.Title,
-			"slug":   newPost.Result.Slug,
+			"slug":       newPost.Result.Slug,
+			"isApproved": newPost.Result.IsApproved,
 		})
 	}
 }
@@ -131,17 +168,18 @@ func UpdatePost() web.HandlerFunc {
 			return c.HandleValidation(result)
 		}
 
+		// Upload first so blob keys are finalized before building the description.
+		if err := bus.Dispatch(c, &cmd.UploadImages{Images: action.Attachments, Folder: "attachments"}); err != nil {
+			return c.Failure(err)
+		}
+
 		updatePost := &cmd.UpdatePost{
 			Post:        action.Post,
 			Title:       action.Title,
-			Description: action.Description,
+			Description: appendUnreferencedAttachments(action.Description, action.Attachments),
 		}
 
 		err := bus.Dispatch(c,
-			&cmd.UploadImages{
-				Images: action.Attachments,
-				Folder: "attachments",
-			},
 			updatePost,
 			&cmd.SetAttachments{
 				Post:        action.Post,
@@ -247,12 +285,23 @@ func ListComments() web.HandlerFunc {
 // GetComment returns a single comment by its ID
 func GetComment() web.HandlerFunc {
 	return func(c *web.Context) error {
+		number, err := c.ParamAsInt("number")
+		if err != nil {
+			return c.NotFound()
+		}
+
 		id, err := c.ParamAsInt("id")
 		if err != nil {
 			return c.NotFound()
 		}
 
-		commentByID := &query.GetCommentByID{CommentID: id}
+		// The parent post must be visible to the caller, and the comment must belong to it
+		getPost := &query.GetPostByNumber{Number: number}
+		if err := bus.Dispatch(c, getPost); err != nil {
+			return c.Failure(err)
+		}
+
+		commentByID := &query.GetCommentByID{CommentID: id, PostID: getPost.Result.ID}
 		if err := bus.Dispatch(c, commentByID); err != nil {
 			return c.Failure(err)
 		}
@@ -272,7 +321,12 @@ func ToggleReaction() web.HandlerFunc {
 			return c.HandleValidation(result)
 		}
 
-		getComment := &query.GetCommentByID{CommentID: action.Comment}
+		getPost := &query.GetPostByNumber{Number: action.Number}
+		if err := bus.Dispatch(c, getPost); err != nil {
+			return c.Failure(err)
+		}
+
+		getComment := &query.GetCommentByID{CommentID: action.Comment, PostID: getPost.Result.ID}
 		if err := bus.Dispatch(c, getComment); err != nil {
 			return c.Failure(err)
 		}
@@ -502,7 +556,8 @@ func ListVotes() web.HandlerFunc {
 			return c.Failure(err)
 		}
 
-		listVotes := &query.ListPostVotes{PostID: getPost.Result.ID, IncludeEmail: true}
+		includeEmail := c.User() != nil && c.User().IsCollaborator()
+		listVotes := &query.ListPostVotes{PostID: getPost.Result.ID, IncludeEmail: includeEmail}
 		if err := bus.Dispatch(c, listVotes); err != nil {
 			return c.Failure(err)
 		}

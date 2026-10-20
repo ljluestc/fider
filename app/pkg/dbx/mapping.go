@@ -1,6 +1,7 @@
 package dbx
 
 import (
+	"database/sql"
 	"fmt"
 	"reflect"
 	"sync"
@@ -24,7 +25,7 @@ func NewRowMapper() *RowMapper {
 //Map values from scanner (usually sql.Rows.Scan) into dest based on columns
 func (m *RowMapper) Map(dest any, columns []string, scanner func(dest ...any) error) error {
 	t := reflect.TypeOf(dest)
-	if t.Kind() == reflect.Ptr {
+	if t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
 
@@ -50,7 +51,7 @@ func (m *RowMapper) Map(dest any, columns []string, scanner func(dest ...any) er
 		field := reflect.ValueOf(dest).Elem()
 
 		for _, f := range mapping.FieldName {
-			if field.Kind() == reflect.Ptr {
+			if field.Kind() == reflect.Pointer {
 				if field.IsNil() {
 					field.Set(reflect.New(field.Type().Elem()))
 				}
@@ -63,7 +64,11 @@ func (m *RowMapper) Map(dest any, columns []string, scanner func(dest ...any) er
 			panic(fmt.Sprintf("Field not found for column %s", c))
 		}
 
-		if field.Kind() == reflect.Slice && field.Type().Elem().Kind() != reflect.Uint8 {
+		// Check if the field type implements sql.Scanner
+		scannerType := reflect.TypeOf((*sql.Scanner)(nil)).Elem()
+		implementsScanner := field.Addr().Type().Implements(scannerType)
+
+		if field.Kind() == reflect.Slice && field.Type().Elem().Kind() != reflect.Uint8 && !implementsScanner {
 			obj := reflect.New(reflect.MakeSlice(field.Type(), 0, 0).Type()).Elem()
 			field.Set(obj)
 			pointers[i] = pq.Array(field.Addr().Interface())
@@ -99,7 +104,7 @@ func NewTypeMapper(t reflect.Type) TypeMapper {
 			fieldType := field.Type
 			fieldKind := fieldType.Kind()
 
-			if fieldKind == reflect.Ptr {
+			if fieldKind == reflect.Pointer {
 				fieldType = field.Type.Elem()
 				mapper := NewTypeMapper(fieldType)
 				for _, f := range mapper.Fields {

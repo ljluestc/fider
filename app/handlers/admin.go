@@ -31,7 +31,7 @@ func AdvancedSettingsPage() web.HandlerFunc {
 			Page:  "Administration/pages/AdvancedSettings.page",
 			Title: "Advanced · Site Settings",
 			Data: web.Map{
-				"customCSS": c.Tenant().CustomCSS,
+				"customCSS":      c.Tenant().CustomCSS,
 				"allowedSchemes": c.Tenant().AllowedSchemes,
 			},
 		})
@@ -52,12 +52,14 @@ func UpdateSettings() web.HandlerFunc {
 				Folder: "logos",
 			},
 			&cmd.UpdateTenantSettings{
-				Logo:           action.Logo,
-				Title:          action.Title,
-				Invitation:     action.Invitation,
-				WelcomeMessage: action.WelcomeMessage,
-				CNAME:          action.CNAME,
-				Locale:         action.Locale,
+				Logo:                action.Logo,
+				Title:               action.Title,
+				Invitation:          action.Invitation,
+				WelcomeMessage:      action.WelcomeMessage,
+				WelcomeHeader:       action.WelcomeHeader,
+				DescriptionTemplate: action.DescriptionTemplate,
+				CNAME:               action.CNAME,
+				Locale:              action.Locale,
 			},
 		); err != nil {
 			return c.Failure(err)
@@ -84,7 +86,7 @@ func UpdateAdvancedSettings() web.HandlerFunc {
 		}
 
 		if err := bus.Dispatch(c, &cmd.UpdateTenantAdvancedSettings{
-			CustomCSS: action.CustomCSS,
+			CustomCSS:      action.CustomCSS,
 			AllowedSchemes: action.AllowedSchemes,
 		}); err != nil {
 			return c.Failure(err)
@@ -103,8 +105,9 @@ func UpdatePrivacySettings() web.HandlerFunc {
 		}
 
 		updateSettings := &cmd.UpdateTenantPrivacySettings{
-			IsPrivate:     action.IsPrivate,
-			IsFeedEnabled: action.IsFeedEnabled,
+			IsPrivate:           action.IsPrivate,
+			IsFeedEnabled:       action.IsFeedEnabled,
+			IsModerationEnabled: action.IsModerationEnabled,
 		}
 		if err := bus.Dispatch(c, updateSettings); err != nil {
 			return c.Failure(err)
@@ -136,14 +139,26 @@ func UpdateEmailAuthAllowed() web.HandlerFunc {
 // ManageMembers is the page used by administrators to change member's role
 func ManageMembers() web.HandlerFunc {
 	return func(c *web.Context) error {
-		allUsers := &query.GetAllUsers{}
-		if err := bus.Dispatch(c, allUsers); err != nil {
+		// Only load first page for initial page load - subsequent pagination handled by API
+		page, _ := c.QueryParamAsInt("page")
+		if page <= 0 {
+			page = 1
+		}
+
+		searchUsers := &query.SearchUsers{
+			Query: c.QueryParam("query"),
+			Roles: c.QueryParamAsArray("roles"),
+			Page:  page,
+			Limit: 10,
+		}
+
+		if err := bus.Dispatch(c, searchUsers); err != nil {
 			return c.Failure(err)
 		}
 
-		// Create an array of UserWithEmail structs from the allUsers.Result
-		allUsersWithEmail := make([]entity.UserWithEmail, len(allUsers.Result))
-		for i, user := range allUsers.Result {
+		// Create an array of UserWithEmail structs from the searchUsers.Result
+		allUsersWithEmail := make([]entity.UserWithEmail, len(searchUsers.Result))
+		for i, user := range searchUsers.Result {
 			allUsersWithEmail[i] = entity.UserWithEmail{
 				User: user,
 			}
@@ -153,7 +168,8 @@ func ManageMembers() web.HandlerFunc {
 			Page:  "Administration/pages/ManageMembers.page",
 			Title: "Manage Members · Site Settings",
 			Data: web.Map{
-				"users": allUsersWithEmail,
+				"users":      allUsersWithEmail,
+				"totalPages": (searchUsers.TotalCount + 10 - 1) / 10,
 			},
 		})
 	}
@@ -220,6 +236,8 @@ func SaveOAuthConfig() web.HandlerFunc {
 				JSONUserIDPath:    action.JSONUserIDPath,
 				JSONUserNamePath:  action.JSONUserNamePath,
 				JSONUserEmailPath: action.JSONUserEmailPath,
+				JSONUserRolesPath: action.JSONUserRolesPath,
+				AllowedRoles:      action.AllowedRoles,
 			},
 		); err != nil {
 			return c.Failure(err)

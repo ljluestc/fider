@@ -12,14 +12,52 @@ import (
 	"github.com/getfider/fider/app/pkg/web"
 )
 
-// ListUsers returns all registered users
+// maxListUsersLimit is the largest page size accepted by ListUsers
+const maxListUsersLimit = 100
+
+// ListUsers returns paginated registered users
 func ListUsers() web.HandlerFunc {
 	return func(c *web.Context) error {
-		allUsers := &query.GetAllUsers{}
-		if err := bus.Dispatch(c, allUsers); err != nil {
+		page, _ := c.QueryParamAsInt("page")
+		if page <= 0 {
+			page = 1
+		}
+
+		limit, _ := c.QueryParamAsInt("limit")
+		if limit <= 0 {
+			limit = 10
+		} else if limit > maxListUsersLimit {
+			limit = maxListUsersLimit
+		}
+
+		searchUsers := &query.SearchUsers{
+			Query: c.QueryParam("query"),
+			Roles: c.QueryParamAsArray("roles"),
+			Page:  page,
+			Limit: limit,
+		}
+
+		if err := bus.Dispatch(c, searchUsers); err != nil {
 			return c.Failure(err)
 		}
-		return c.Ok(allUsers.Result)
+
+		// Create an array of UserWithEmail structs to include email in JSON response
+		allUsersWithEmail := make([]entity.UserWithEmail, len(searchUsers.Result))
+		for i, user := range searchUsers.Result {
+			allUsersWithEmail[i] = entity.UserWithEmail{
+				User: user,
+			}
+		}
+
+		totalPages := (searchUsers.TotalCount + limit - 1) / limit
+
+		return c.Ok(web.Map{
+			"users":      allUsersWithEmail,
+			"totalCount": searchUsers.TotalCount,
+			"totalPages": totalPages,
+			"page":       page,
+			"limit":      limit,
+		})
 	}
 }
 

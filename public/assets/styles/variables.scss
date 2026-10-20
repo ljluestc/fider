@@ -1,26 +1,19 @@
-@use "~inter-ui/default" with (
-  $inter-font-display: swap,
-  $inter-font-path: "~inter-ui/web"
-);
+// Used by every stylesheet, so this module must not emit any CSS itself
+// (otherwise it is duplicated into every CSS chunk). Global CSS belongs in index.scss.
+@forward "variables/functions";
+@forward "variables/colors";
+@forward "variables/dark-colors";
+@forward "variables/spacing";
+@forward "variables/sizing";
+@forward "variables/text";
+@forward "utility/theme";
 
-@use "~inter-ui/variable" with (
-  $inter-font-display: swap,
-  $inter-font-path: "~inter-ui/variable"
-);
-
-@import "variables/_functions";
-@import "variables/_colors";
-@import "variables/_dark-colors";
-@import "variables/_spacing";
-@import "variables/_sizing";
-@import "variables/_text";
-@import "utility/_theme.scss";
+@use "variables/functions" as *;
+@use "variables/dark-colors" as *;
+@use "variables/text" as *;
 
 /* @include get-theme("dark"); */
 $colors: $dark-colors;
-
-@include default.all;
-@include variable.all;
 
 $all: (
   colors: $colors,
@@ -30,17 +23,30 @@ $all: (
       small: 6px,
       medium: 8px,
       large: 12px,
+      xlarge: 20px,
       full: 999px,
     ),
   ),
 );
 
+// get
+@function get($key, $map: $all) {
+  $keys: str-explode($key, ".");
+
+  @if not deep-map-check($map, $keys...) {
+    @error 'The argument $map: `#{$map}` doesn\'t has some of the $keys: `#{$keys}`!';
+  }
+
+  @return deep-map-get($map, $keys...);
+}
+
 // Queries
-$medias: "sm", "md", "lg", "xl";
+$medias: "sm", "md", "lg", "xl", "xl2";
 $sm-width: 576px;
 $md-width: 768px;
 $lg-width: 992px;
 $xl-width: 1200px;
+$xl2-width: 1400px;
 
 @mixin media($media) {
   @if $media == "sm" {
@@ -59,6 +65,10 @@ $xl-width: 1200px;
     @media only screen and (min-width: #{$xl-width}) {
       @content;
     }
+  } @else if $media == "xl2" {
+    @media only screen and (min-width: #{$xl2-width}) {
+      @content;
+    }
   }
 }
 
@@ -67,4 +77,16 @@ $xl-width: 1200px;
   opacity: 0.45 !important;
   background-image: none !important;
   pointer-events: none !important;
+}
+
+@mixin dark-mode() {
+  body[data-theme="dark"] & {
+    @content;
+  }
+}
+
+@mixin light-mode() {
+  body[data-theme="light"] & {
+    @content;
+  }
 }

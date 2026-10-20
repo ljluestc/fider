@@ -43,6 +43,7 @@ func routes(r *web.Engine) *web.Engine {
 		assets.Use(middlewares.ClientCache(365 * 24 * time.Hour))
 		assets.Get("/static/favicon", handlers.Favicon())
 		assets.Static("/assets/*filepath", "dist")
+		assets.Static("/static/assets/*filepath", "static")
 	}
 
 	feed := r.Group()
@@ -70,11 +71,10 @@ func routes(r *web.Engine) *web.Engine {
 
 	r.Get("/privacy", handlers.LegalPage("Privacy Policy", "privacy.md"))
 
-	if env.IsBillingEnabled() {
-		wh := r.Group()
-		{
-			wh.Post("/webhooks/paddle", webhooks.IncomingPaddleWebhook())
-		}
+	// Stripe webhooks (before CSRF middleware)
+	stripeWh := r.Group()
+	{
+		stripeWh.Post("/webhooks/stripe", webhooks.IncomingStripeWebhook())
 	}
 
 	r.Use(middlewares.CSRF())
@@ -118,8 +118,8 @@ func routes(r *web.Engine) *web.Engine {
 
 	r.Get("/signin", handlers.SignInPage())
 	r.Get("/signin/complete", handlers.CompleteSignInProfilePage())
-	r.Get("/loginemailsent", handlers.LoginEmailSentPage())
 	r.Get("/not-invited", handlers.NotInvitedPage())
+	r.Get("/access-denied", handlers.AccessDeniedPage())
 	r.Get("/signin/verify", handlers.VerifySignInKey(enum.EmailVerificationKindSignIn))
 	r.Get("/invite/verify", handlers.VerifySignInKey(enum.EmailVerificationKindUserInvitation))
 	r.Post("/_api/signin/complete", handlers.CompleteSignInProfile())
@@ -128,10 +128,17 @@ func routes(r *web.Engine) *web.Engine {
 	r.Post("/_api/signin/verify", handlers.VerifySignInCode())
 	r.Post("/_api/signin/resend", handlers.ResendSignInCode())
 
+	// Cancel a scheduled site deletion. Authorised by the unguessable key in the emailed link
+	// alone, so it must stay reachable without authentication (it only restores access).
+	if !env.IsSingleHostMode() {
+		r.Get("/admin/danger-zone/cancel", handlers.CancelTenantDeletion())
+	}
+
 	// Block if it's private tenant with unauthenticated user
 	r.Use(middlewares.CheckTenantPrivacy())
 
 	r.Get("/", handlers.Index())
+	r.Get("/roadmap", handlers.RoadmapPage())
 	r.Get("/posts/:number", handlers.PostDetails())
 	r.Get("/posts/:number/:slug", handlers.PostDetails())
 
@@ -164,22 +171,39 @@ func routes(r *web.Engine) *web.Engine {
 		ui.Get("/admin/advanced", handlers.AdvancedSettingsPage())
 		ui.Get("/admin/privacy", handlers.Page("Privacy · Site Settings", "", "Administration/pages/PrivacySettings.page"))
 		ui.Get("/admin/invitations", handlers.Page("Invitations · Site Settings", "", "Administration/pages/Invitations.page"))
-		ui.Get("/admin/members", handlers.ManageMembers())
+		ui.Get("/admin/users", handlers.ManageMembers())
 		ui.Get("/admin/tags", handlers.ManageTags())
 		ui.Get("/admin/authentication", handlers.ManageAuthentication())
 		ui.Get("/_api/admin/oauth/:provider", handlers.GetOAuthConfig())
 
+		// Pro features (available to self-hosters and pro hosted customers)
+		proUi := ui.Group()
+		{
+			proUi.Use(middlewares.RequirePro())
+			proUi.Get("/admin/moderation", handlers.ModerationPage())
+		}
+
 		// From this step, only Administrators are allowed
 		ui.Use(middlewares.IsAuthorized(enum.RoleAdministrator))
+
+		// Danger Zone — delete the entire site. Hosted multi-tenant only; owner-only is
+		// enforced inside the handlers.
+		if !env.IsSingleHostMode() {
+			ui.Get("/admin/danger-zone", handlers.DangerZonePage())
+			ui.Delete("/_api/admin/tenant", handlers.RequestTenantDeletion())
+			ui.Post("/_api/admin/tenant/cancel-deletion", handlers.CancelTenantDeletionByOwner())
+		}
 
 		ui.Get("/admin/export", handlers.Page("Export · Site Settings", "", "Administration/pages/Export.page"))
 		ui.Get("/admin/export/posts.csv", handlers.ExportPostsToCSV())
 		ui.Get("/admin/export/backup.zip", handlers.ExportBackupZip())
+		ui.Get("/admin/export/tags.json", handlers.ExportTagsJSON())
+		ui.Post("/_api/admin/import/tags", handlers.ImportTagsJSON())
 		ui.Get("/admin/webhooks", handlers.ManageWebhooks())
 		ui.Post("/_api/admin/webhook", handlers.CreateWebhook())
 		ui.Put("/_api/admin/webhook/:id", handlers.UpdateWebhook())
 		ui.Delete("/_api/admin/webhook/:id", handlers.DeleteWebhook())
-		ui.Get("/_api/admin/webhook/test/:id", handlers.TestWebhook())
+		ui.Post("/_api/admin/webhook/test/:id", handlers.TestWebhook())
 		ui.Post("/_api/admin/webhook/preview", handlers.PreviewWebhook())
 		ui.Get("/_api/admin/webhook/props/:type", handlers.GetWebhookProps())
 		ui.Post("/_api/admin/settings/general", handlers.UpdateSettings())
@@ -191,10 +215,22 @@ func routes(r *web.Engine) *web.Engine {
 		ui.Post("/_api/admin/roles/:role/users", handlers.ChangeUserRole())
 		ui.Put("/_api/admin/users/:userID/block", handlers.BlockUser())
 		ui.Delete("/_api/admin/users/:userID/block", handlers.UnblockUser())
+		ui.Put("/_api/admin/users/:userID/trust", handlers.TrustUser())
+		ui.Delete("/_api/admin/users/:userID/trust", handlers.UntrustUser())
+
+		// Pro features (available to self-hosters and pro hosted customers)
+		proAdmin := ui.Group()
+		{
+			proAdmin.Use(middlewares.RequirePro())
+			proAdmin.Get("/_api/admin/moderation/items", handlers.GetModerationItems())
+			proAdmin.Get("/_api/admin/moderation/count", handlers.GetModerationCount())
+		}
 
 		if env.IsBillingEnabled() {
 			ui.Get("/admin/billing", handlers.ManageBilling())
-			ui.Post("/_api/billing/checkout-link", handlers.GenerateCheckoutLink())
+			ui.Post("/_api/admin/billing/portal", handlers.CreateStripePortalSession())
+			ui.Post("/_api/admin/billing/checkout", handlers.CreateStripeCheckoutSession())
+			ui.Post("/_api/admin/billing/checkout/annual", handlers.CreateStripeAnnualCheckoutSession())
 		}
 	}
 
@@ -209,6 +245,7 @@ func routes(r *web.Engine) *web.Engine {
 		publicApi.Get("/api/v1/posts/:number/comments", apiv1.ListComments())
 		publicApi.Get("/api/v1/posts/:number/comments/:id", apiv1.GetComment())
 		publicApi.Get("/api/v1/taggable-users", apiv1.ListTaggableUsers())
+		publicApi.Get("/api/v1/posts/:number/votes", apiv1.ListVotes())
 	}
 
 	// Operations used to manage the content of a site
@@ -243,7 +280,6 @@ func routes(r *web.Engine) *web.Engine {
 		staffApi.Use(middlewares.IsAuthorized(enum.RoleCollaborator, enum.RoleAdministrator))
 
 		staffApi.Get("/api/v1/users", apiv1.ListUsers())
-		staffApi.Get("/api/v1/posts/:number/votes", apiv1.ListVotes())
 		staffApi.Post("/api/v1/invitations/send", apiv1.SendInvites())
 		staffApi.Post("/api/v1/invitations/sample", apiv1.SendSampleInvite())
 
@@ -264,6 +300,20 @@ func routes(r *web.Engine) *web.Engine {
 		adminApi.Post("/api/v1/tags", apiv1.CreateEditTag())
 		adminApi.Put("/api/v1/tags/:slug", apiv1.CreateEditTag())
 		adminApi.Delete("/api/v1/tags/:slug", apiv1.DeleteTag())
+
+		// Pro features (available to self-hosters and pro hosted customers)
+		proAdminApi := adminApi.Group()
+		{
+			proAdminApi.Use(middlewares.RequirePro())
+			proAdminApi.Post("/api/v1/admin/moderation/posts/:id/approve-and-verify", apiv1.ApprovePostAndVerify())
+			proAdminApi.Post("/api/v1/admin/moderation/posts/:id/decline-and-block", apiv1.DeclinePostAndBlock())
+			proAdminApi.Post("/api/v1/admin/moderation/posts/:id/approve", apiv1.ApprovePost())
+			proAdminApi.Post("/api/v1/admin/moderation/posts/:id/decline", apiv1.DeclinePost())
+			proAdminApi.Post("/api/v1/admin/moderation/comments/:id/approve-and-verify", apiv1.ApproveCommentAndVerify())
+			proAdminApi.Post("/api/v1/admin/moderation/comments/:id/decline-and-block", apiv1.DeclineCommentAndBlock())
+			proAdminApi.Post("/api/v1/admin/moderation/comments/:id/approve", apiv1.ApproveComment())
+			proAdminApi.Post("/api/v1/admin/moderation/comments/:id/decline", apiv1.DeclineComment())
+		}
 
 		adminApi.Use(middlewares.BlockLockedTenants())
 		adminApi.Delete("/api/v1/posts/:number", apiv1.DeletePost())

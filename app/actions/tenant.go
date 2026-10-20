@@ -23,11 +23,11 @@ type CreateTenant struct {
 	Token           string `json:"token"`
 	Name            string `json:"name"`
 	Email           string `json:"email" format:"lower"`
-	VerificationKey string
-	TenantName      string `json:"tenantName"`
-	LegalAgreement  bool   `json:"legalAgreement"`
-	Subdomain       string `json:"subdomain" format:"lower"`
-	UserClaims      *jwt.OAuthClaims
+	VerificationKey string           `json:"-"`
+	TenantName      string           `json:"tenantName"`
+	LegalAgreement  bool             `json:"legalAgreement"`
+	Subdomain       string           `json:"subdomain" format:"lower"`
+	UserClaims      *jwt.OAuthClaims `json:"-"`
 }
 
 func NewCreateTenant() *CreateTenant {
@@ -119,7 +119,7 @@ func (action *CreateTenant) GetKind() enum.EmailVerificationKind {
 
 // ResendSignUpEmail is the input model used to resend signup verification email
 type ResendSignUpEmail struct {
-	VerificationKey string
+	VerificationKey string `json:"-"`
 }
 
 func NewResendSignUpEmail() *ResendSignUpEmail {
@@ -190,12 +190,14 @@ func (action *ResendSignUpEmail) GetKind() enum.EmailVerificationKind {
 
 // UpdateTenantSettings is the input model used to update tenant settings
 type UpdateTenantSettings struct {
-	Logo           *dto.ImageUpload `json:"logo"`
-	Title          string           `json:"title"`
-	Invitation     string           `json:"invitation"`
-	WelcomeMessage string           `json:"welcomeMessage"`
-	Locale         string           `json:"locale"`
-	CNAME          string           `json:"cname" format:"lower"`
+	Logo                *dto.ImageUpload `json:"logo"`
+	Title               string           `json:"title"`
+	Invitation          string           `json:"invitation"`
+	WelcomeMessage      string           `json:"welcomeMessage"`
+	WelcomeHeader       string           `json:"welcomeHeader"`
+	DescriptionTemplate string           `json:"descriptionTemplate"`
+	Locale              string           `json:"locale"`
+	CNAME               string           `json:"cname" format:"lower"`
 }
 
 func NewUpdateTenantSettings() *UpdateTenantSettings {
@@ -212,6 +214,11 @@ func (action *UpdateTenantSettings) IsAuthorized(ctx context.Context, user *enti
 // Validate if current model is valid
 func (action *UpdateTenantSettings) Validate(ctx context.Context, user *entity.User) *validate.Result {
 	result := validate.Success()
+
+	// An explicit "logo": null overrides the value set by NewUpdateTenantSettings
+	if action.Logo == nil {
+		action.Logo = &dto.ImageUpload{}
+	}
 
 	tenant, hasTenant := ctx.Value(app.TenantCtxKey).(*entity.Tenant)
 	if hasTenant {
@@ -240,6 +247,14 @@ func (action *UpdateTenantSettings) Validate(ctx context.Context, user *entity.U
 
 	if len(action.Invitation) > 60 {
 		result.AddFieldFailure("invitation", "Invitation must have less than 60 characters.")
+	}
+
+	if len(action.WelcomeHeader) > 100 {
+		result.AddFieldFailure("welcomeHeader", "Welcome Header must have less than 100 characters.")
+	}
+
+	if len(action.DescriptionTemplate) > 2000 {
+		result.AddFieldFailure("descriptionTemplate", "Idea Template must have less than 2000 characters.")
 	}
 
 	if !i18n.IsValidLocale(action.Locale) {
@@ -272,8 +287,9 @@ func (action *UpdateTenantAdvancedSettings) Validate(ctx context.Context, user *
 
 // UpdateTenantPrivacySettings is the input model used to update tenant privacy settings
 type UpdateTenantPrivacySettings struct {
-	IsPrivate     bool `json:"isPrivate"`
-	IsFeedEnabled bool `json:"isFeedEnabled"`
+	IsPrivate           bool `json:"isPrivate"`
+	IsFeedEnabled       bool `json:"isFeedEnabled"`
+	IsModerationEnabled bool `json:"isModerationEnabled"`
 }
 
 // IsAuthorized returns true if current user is authorized to perform this action

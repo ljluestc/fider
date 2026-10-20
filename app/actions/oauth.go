@@ -33,6 +33,8 @@ type CreateEditOAuthConfig struct {
 	JSONUserIDPath    string           `json:"jsonUserIDPath"`
 	JSONUserNamePath  string           `json:"jsonUserNamePath"`
 	JSONUserEmailPath string           `json:"jsonUserEmailPath"`
+	JSONUserRolesPath string           `json:"jsonUserRolesPath"`
+	AllowedRoles      string           `json:"allowedRoles"`
 }
 
 func NewCreateEditOAuthConfig() *CreateEditOAuthConfig {
@@ -82,6 +84,11 @@ func (action *SetSystemProviderStatus) Validate(ctx context.Context, user *entit
 
 func (action *CreateEditOAuthConfig) Validate(ctx context.Context, user *entity.User) *validate.Result {
 	result := validate.Success()
+
+	// An explicit "logo": null overrides the value set by NewCreateEditOAuthConfig
+	if action.Logo == nil {
+		action.Logo = &dto.ImageUpload{}
+	}
 
 	if action.Status == enum.OAuthConfigDisabled {
 		tenant := ctx.Value(app.TenantCtxKey).(*entity.Tenant)
@@ -182,6 +189,14 @@ func (action *CreateEditOAuthConfig) Validate(ctx context.Context, user *entity.
 
 	if len(action.JSONUserEmailPath) > 100 {
 		result.AddFieldFailure("jsonUserEmailPath", "JSON User Email Path must have less than 100 characters.")
+	}
+
+	if len(action.JSONUserRolesPath) > 100 {
+		result.AddFieldFailure("jsonUserRolesPath", "JSON User Roles Path must have less than 100 characters.")
+	}
+
+	if len(action.AllowedRoles) > 500 {
+		result.AddFieldFailure("allowedRoles", "Allowed Roles must have less than 500 characters.")
 	}
 
 	return result

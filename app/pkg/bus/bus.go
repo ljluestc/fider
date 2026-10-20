@@ -110,7 +110,7 @@ func Dispatch(ctx context.Context, msgs ...Msg) error {
 		key := getKey(msg)
 		handler := handlers[key]
 		if handler == nil {
-			panic(fmt.Errorf("could not find handler for '%s'.", key))
+			panic(fmt.Errorf("could not find handler for '%s'", key))
 		}
 
 		var params = []reflect.Value{
@@ -172,7 +172,7 @@ func GetCallCount(msg Msg) int {
 
 func getKey(msg Msg) string {
 	typeof := reflect.TypeOf(msg)
-	if typeof.Kind() != reflect.Ptr {
+	if typeof.Kind() != reflect.Pointer {
 		panic(fmt.Errorf("'%s' is not a pointer", keyForElement(typeof)))
 	}
 

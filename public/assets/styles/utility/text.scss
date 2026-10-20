@@ -1,3 +1,5 @@
+@use "../variables" as *;
+
 p,
 pre {
   margin: 0 0 14px;
@@ -22,9 +24,13 @@ pre:last-child {
   letter-spacing: -1px;
 }
 
+.header-emphasis {
+  color: var(--colors-primary-base);
+}
+
 .text-display {
-  font-size: get("font.size.xl");
-  font-weight: get("font.weight.semibold");
+  font-size: get("font.size.3xl");
+  font-weight: get("font.weight.xbold");
 }
 
 .text-header {
@@ -116,6 +122,10 @@ pre:last-child {
 
 .text-left {
   text-align: left;
+}
+
+.text-normal {
+  font-weight: get("font.weight.normal");
 }
 
 .text-medium {

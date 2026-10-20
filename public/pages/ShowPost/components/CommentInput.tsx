@@ -1,7 +1,7 @@
 import React, { useCallback, useState, useEffect } from "react"
 
 import { Post } from "@fider/models"
-import { Avatar, UserName, Button, Form } from "@fider/components"
+import { Avatar, Button, Form } from "@fider/components"
 import { SignInModal } from "@fider/components"
 
 import { cache, actions, Failure, Fider } from "@fider/services"
@@ -27,10 +27,13 @@ export const CommentInput = (props: CommentInputProps) => {
     return cache.session.get(getCacheKey(CACHE_TITLE_KEY))
   }
 
+  const COMMENT_MAX_LENGTH = 4000
+
   const fider = useFider()
   const [isSignInModalOpen, setIsSignInModalOpen] = useState(false)
   const [error, setError] = useState<Failure | undefined>(undefined)
   const [isClient, setIsClient] = useState(false)
+  const [contentLength, setContentLength] = useState((cache.session.get(`${CACHE_TITLE_KEY}${props.post.id}`) ?? "").length)
 
   // Use the attachments hook
   const { attachments, handleImageUploaded, getImageSrc, clearAttachments } = useAttachments({
@@ -55,6 +58,9 @@ export const CommentInput = (props: CommentInputProps) => {
     if (result.ok) {
       clearAttachments()
       cache.session.remove(getCacheKey(CACHE_TITLE_KEY))
+      if (fider.session.isModerationRequiredForNewPost) {
+        cache.session.set("COMMENT_CREATED_MODERATION", "true")
+      }
       location.reload()
     } else {
       setError(result.error)
@@ -71,21 +77,18 @@ export const CommentInput = (props: CommentInputProps) => {
 
   const commentChanged = useCallback((value: string): void => {
     cache.session.set(getCacheKey(CACHE_TITLE_KEY), value)
+    setContentLength(value.length)
   }, [])
+
+  const isOverLimit = contentLength > COMMENT_MAX_LENGTH
 
   return (
     <>
       <SignInModal isOpen={isSignInModalOpen} onClose={hideModal} />
-      <HStack spacing={2} className="c-comment-input" align="start">
-        {Fider.session.isAuthenticated && <Avatar user={Fider.session.user} />}
-        <div className="flex-grow bg-gray-100 rounded-md p-2">
+      <HStack spacing={4} className="c-comment-input" align="start">
+        {Fider.session.isAuthenticated && <Avatar user={Fider.session.user} size="large" />}
+        <div className="c-comment-input-card">
           <Form error={error}>
-            {Fider.session.isAuthenticated && (
-              <div className="mb-1">
-                <UserName user={Fider.session.user} />
-              </div>
-            )}
-
             {isClient ? (
               <>
                 <CommentEditor
@@ -97,14 +100,15 @@ export const CommentInput = (props: CommentInputProps) => {
                   placeholder={i18n._({ id: "showpost.commentinput.placeholder", message: "Leave a comment" })}
                   maxAttachments={2}
                   maxImageSizeKB={5 * 1024}
+                  maxLength={COMMENT_MAX_LENGTH}
                   onGetImageSrc={getImageSrc}
                   onImageUploaded={handleImageUploaded}
                 />
 
                 {hasContent && (
                   <>
-                    <Button variant="primary" onClick={submit} className="mt-2">
-                      <Trans id="action.submit">Submit</Trans>
+                    <Button disabled={!fider.session.isAuthenticated || isOverLimit} variant="primary" onClick={submit} className="mt-4">
+                      <Trans id="action.postcomment">Post</Trans>
                     </Button>
                   </>
                 )}
